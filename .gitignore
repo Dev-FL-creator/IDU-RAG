@@ -8,15 +8,32 @@ config.json
 .env.test
 .env.production
 
-# 依赖包目录
-node_modules/
+# Python 相关
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
 .Python
-env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虚拟环境
+azure_openai_env/
 venv/
+env/
 ENV/
 env.bak/
 venv.bak/
