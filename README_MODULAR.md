@@ -25,22 +25,6 @@ pip install azure-search-documents openai PyPDF2 requests
 
 配置文件 (config.json) 包含所有需要的参数：
 
-```json
-{
-    "openai_api_key": "your-openai-api-key",
-    "openai_endpoint": "https://your-openai-resource.openai.azure.com/",
-    "openai_api_version": "2024-10-21",
-    "embedding_model": "text-embedding-ada-002",
-    "chat_model": "gpt-4o",
-    "search_service_name": "your-search-service",
-    "search_api_key": "your-search-api-key",
-    "search_api_version": "2024-07-01",
-    "index_name": "pdf-knowledge-base",
-    "vector_metric": "cosine",
-    "openai_deployment": "gpt-4o",
-    "embedding_dimensions": 1536
-}
-```
 
 ## 使用方法
 
