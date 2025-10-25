@@ -9,8 +9,6 @@ from azure.search.documents.indexes.models import (
     SearchableField,
     SearchField,
     VectorSearch,
-    HnswVectorSearchAlgorithmConfiguration,
-    VectorSearchProfile,
     SearchFieldDataType
 )
 
@@ -34,38 +32,44 @@ def create_index_from_config(config_path):
         print(f"索引 {index_name} 已存在")
         return
     
-    # 定义向量搜索配置
-    vector_search = VectorSearch(
-        algorithms=[
-            HnswVectorSearchAlgorithmConfiguration(
-                name="hnsw-algorithm",
-                parameters={
+    # 定义向量搜索配置 - 使用字典而不是特定类
+    vector_search = {
+        "algorithms": [
+            {
+                "name": "my-hnsw-config", 
+                "kind": "hnsw",
+                "parameters": {
                     "m": 4,
                     "efConstruction": 400,
                     "efSearch": 500,
                     "metric": config.get("vector_metric", "cosine")
                 }
-            )
+            }
         ],
-        profiles=[
-            VectorSearchProfile(
-                name="vector-profile",
-                algorithm_configuration_name="hnsw-algorithm",
-            )
+        "profiles": [
+            {
+                "name": "my-vector-profile",
+                "algorithm": "my-hnsw-config"
+            }
         ]
-    )
+    }
     
     # 定义索引字段
     fields = [
         SimpleField(name="id", type=SearchFieldDataType.String, key=True),
         SearchableField(name="content", type=SearchFieldDataType.String),
         SimpleField(name="filepath", type=SearchFieldDataType.String),
-        SearchField(
-            name="content_vector",
-            type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
-            vector_search_dimensions=embedding_dimensions,
-            vector_search_profile_name="vector-profile"
-        )
+        # 向量字段定义
+        {
+            "name": "content_vector",
+            "type": SearchFieldDataType.Collection(SearchFieldDataType.Single),
+            "searchable": False,
+            "filterable": False,
+            "sortable": False,
+            "facetable": False,
+            "dimensions": embedding_dimensions,
+            "vectorSearchProfile": "my-vector-profile"
+        }
     ]
     
     # 创建索引
