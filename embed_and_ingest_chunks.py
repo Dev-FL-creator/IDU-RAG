@@ -1,27 +1,66 @@
-# ingest_single.py
-import os, sys, json, uuid, re
+# ingest_single.py —— 混合模式：Embedding 用 Azure（已部署），Chat 用 DeepSeek（OpenAI 兼容）
+import os, sys, json, uuid, re, mimetypes
 from typing import List, Dict, Any
 from tqdm import tqdm
+
 from azure.core.credentials import AzureKeyCredential
-from azure.ai.documentintelligence import DocumentIntelligenceClient
 from azure.search.documents import SearchClient
-from openai import AzureOpenAI
-import mimetypes
+from azure.ai.documentintelligence import DocumentIntelligenceClient
+from azure.ai.formrecognizer import DocumentAnalysisClient
+from azure.core.exceptions import ResourceNotFoundError
+
+# ✅ DeepSeek 走 OpenAI 兼容客户端；Azure Embedding 走 AzureOpenAI
+from openai import OpenAI as OpenAIPlatform, AzureOpenAI
 
 
-# ---------- PDF utilities ----------
+# ========== PDF utilities ==========
 def extract_text_from_document_intelligence(pdf_path, endpoint, key):
-    client = DocumentIntelligenceClient(endpoint=endpoint, credential=AzureKeyCredential(key))
+    """
+    先尝试新SDK Document Intelligence 的 prebuilt-document；
+    如果返回404（区域/资源不支持），自动回退到旧SDK Form Recognizer。
+    """
+    try:
+        client = DocumentIntelligenceClient(endpoint=endpoint, credential=AzureKeyCredential(key))
+        mime, _ = mimetypes.guess_type(pdf_path)
+        if not mime:
+            mime = "application/pdf"
+        with open(pdf_path, "rb") as f:
+            poller = client.begin_analyze_document(
+                model_id="prebuilt-document",
+                analyze_request=f,
+                content_type=mime
+            )
+            result = poller.result()
+        return "\n".join([line.content for p in result.pages for line in p.lines])
+    except ResourceNotFoundError as e:
+        print("[info] prebuilt-document on new SDK 404，自动回退到旧SDK：", e)
+
+    # 旧SDK回退
+    client_old = DocumentAnalysisClient(endpoint=endpoint, credential=AzureKeyCredential(key))
     with open(pdf_path, "rb") as f:
-        poller = client.begin_analyze_document("prebuilt-document", analyze_request=f, content_type="application/pdf")
+        poller = client_old.begin_analyze_document("prebuilt-document", document=f)
         result = poller.result()
-    return "\n".join([line.content for p in result.pages for line in p.lines])
+
+    if getattr(result, "paragraphs", None):
+        lines = [p.content for p in result.paragraphs if p.content]
+        return "\n".join(lines)
+    if getattr(result, "content", None):
+        return result.content
+
+    # 兜底
+    text_blocks = []
+    for table in getattr(result, "tables", []) or []:
+        for cell in table.cells:
+            if cell.content:
+                text_blocks.append(cell.content)
+    return "\n".join(text_blocks)
 
 
 def chunk_text(text: str, max_chunk_size=5000, overlap=200) -> List[str]:
     chunks = []
     n = len(text)
-    if n == 0: return chunks
+    if n == 0:
+        return chunks
     overlap = max(0, min(overlap, max_chunk_size - 1))
     start = 0
     while start < n:
@@ -35,17 +74,72 @@ def chunk_text(text: str, max_chunk_size=5000, overlap=200) -> List[str]:
             if bp != -1 and bp > start + 1000:
                 end = bp + 1
         chunk = text[start:end].strip()
-        if chunk: chunks.append(chunk)
-        if end >= n: break
+        if chunk:
+            chunks.append(chunk)
+        if end >= n:
+            break
         start = max(0, end - overlap)
-        if start >= n: break
+        if start >= n:
+            break
     return chunks
 
-# ---------- AOAI utilities ----------
-def batch_embeddings(client: AzureOpenAI, deployment: str, texts: List[str]) -> List[List[float]]:
-    resp = client.embeddings.create(model=deployment, input=texts)
-    return [item.embedding for item in resp.data]
 
+# ========== Clients ==========
+def build_azure_embed_client(cfg: dict) -> AzureOpenAI:
+    """
+    Azure Embedding 客户端（需要你已在 Azure 上部署 embedding 模型）。
+    cfg 需包含：openai_api_key, openai_api_version, openai_endpoint
+    """
+    return AzureOpenAI(
+        api_key=cfg["openai_api_key"],
+        api_version=cfg["openai_api_version"],
+        azure_endpoint=cfg["openai_endpoint"],
+    )
+
+def build_deepseek_chat_client(cfg: dict) -> OpenAIPlatform:
+    """
+    DeepSeek Chat 客户端（OpenAI 兼容）。
+    cfg 需包含：deepseek_api_key；可选 deepseek_base_url (默认 https://api.deepseek.com)
+    """
+    return OpenAIPlatform(
+        api_key=cfg["deepseek_api_key"],
+        base_url=cfg.get("deepseek_base_url", "https://api.deepseek.com")
+    )
+
+
+# ========== Embeddings ==========
+def _pad_or_truncate(vecs: List[List[float]], target_dim: int) -> List[List[float]]:
+    fixed = []
+    for v in vecs:
+        if len(v) == target_dim:
+            fixed.append(v)
+        elif len(v) > target_dim:
+            fixed.append(v[:target_dim])
+        else:
+            fixed.append(v + [0.0] * (target_dim - len(v)))
+    return fixed
+
+def batch_embeddings(azure_embed_client: AzureOpenAI, model: str, texts: List[str], target_dim: int) -> List[List[float]]:
+    """
+    - 使用 Azure 部署好的 embedding （model=部署名）
+    - 失败时回退本地 sentence-transformers（需已安装）
+    """
+    try:
+        resp = azure_embed_client.embeddings.create(model=model, input=texts)
+        vecs = [item.embedding for item in resp.data]
+        return _pad_or_truncate(vecs, target_dim)
+    except Exception as e:
+        print("[warn] Azure embedding 失败，回退本地 sentence-transformers：", e)
+        try:
+            from sentence_transformers import SentenceTransformer
+            st = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")  # 384维
+            vecs = st.encode(texts, normalize_embeddings=True).tolist()
+            return _pad_or_truncate(vecs, target_dim)
+        except Exception as ee:
+            raise RuntimeError("本地 embedding 失败，请安装 sentence-transformers 或检查 Azure 部署与密钥") from ee
+
+
+# ========== JSON 抽取（DeepSeek Chat）==========
 ORG_SCHEMA = {
     "type": "object",
     "properties": {
@@ -57,38 +151,6 @@ ORG_SCHEMA = {
         "industry": {"type": "string"},
         "is_DU_member": {"type": ["boolean", "null"]},
         "website": {"type": ["string", "null"]},
-
-        "members": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string"},
-                    "title": {"type": "string"},
-                    "role": {"type": "string"},
-                    "affiliation": {"type": "string"}
-                }
-            }
-        },
-
-        "facilities": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string"},
-                    "type": {"type": "string"},
-                    "usage": {"type": "string"},
-                    "location": {"type": "string"}
-                }
-            }
-        },
-
-        "capabilities": {"type": "array", "items": {"type": "string"}},
-        "projects": {"type": "array", "items": {"type": "string"}},
-        "awards": {"type": "array", "items": {"type": "string"}},
-        "services": {"type": "array", "items": {"type": "string"}},
-
         "contacts": {
             "type": "array",
             "items": {
@@ -97,16 +159,13 @@ ORG_SCHEMA = {
                     "name": {"type": "string"},
                     "email": {"type": ["string", "null"]},
                     "phone": {"type": ["string", "null"]},
-                    "title": {"type": ["string", "null"]}
-                }
-            }
+                    "title": {"type": ["string", "null"]},
+                },
+            },
         },
-
-        "addresses": {"type": "array", "items": {"type": "string"}},
-        "notes": {"type": "string"}
-    }
+        "notes": {"type": "string"},
+    },
 }
-
 
 PROMPT_SYSTEM = (
     "You are a precise information extraction assistant. "
@@ -115,111 +174,98 @@ PROMPT_SYSTEM = (
     "Return JSON only, no extra commentary."
 )
 
-# 对整份机构文本做结构化信息抽取，产出JSON
-def extract_org_json(full_text: str, client: AzureOpenAI, chat_deploy: str) -> Dict[str, Any]:
-    # try Responses JSON schema
+def extract_org_json(full_text: str, deepseek_client: OpenAIPlatform, chat_model: str) -> Dict[str, Any]:
     try:
-        rsp = client.responses.create(
-            model=chat_deploy,
+        rsp = deepseek_client.responses.create(
+            model=chat_model,  # e.g., "deepseek-chat"
             input=[
-                {"role":"system","content":PROMPT_SYSTEM},
-                {"role":"user","content":"Extract the organization information from the following text as strict JSON.\n\n"+full_text}
+                {"role": "system", "content": PROMPT_SYSTEM},
+                {"role": "user", "content": "Extract the organization information from the following text as strict JSON.\n\n" + full_text},
             ],
-            response_format={"type":"json_schema","json_schema":{"name":"OrgProfile","schema":ORG_SCHEMA,"strict":True}},
-            max_output_tokens=2048
+            response_format={"type": "json_schema", "json_schema": {"name": "OrgProfile", "schema": ORG_SCHEMA, "strict": True}},
+            max_output_tokens=2048,
         )
         raw = rsp.output[0].content[0].text
         return json.loads(raw)
     except Exception:
-        # fallback to chat.completions JSON mode
-        rsp = client.chat.completions.create(
-            model=chat_deploy,
+        # fallback：chat.completions
+        rsp = deepseek_client.chat.completions.create(
+            model=chat_model,
             messages=[
-                {"role":"system","content":PROMPT_SYSTEM},
-                {"role":"user","content":"Extract the organization information from the following text as strict JSON.\n\n"+full_text}
+                {"role": "system", "content": PROMPT_SYSTEM},
+                {"role": "user", "content": "Extract the organization information from the following text as strict JSON.\n\n" + full_text},
             ],
-            response_format={"type":"json_object"},
-            temperature=0.1
+            response_format={"type": "json_object"},
+            temperature=0.1,
         )
         return json.loads(rsp.choices[0].message.content)
-    
-# 把抽取结果中的数组对象整理成 Azure Search 索引可直接存的多值字段形式
+
+
 def flatten_for_index(data: Dict[str, Any]) -> Dict[str, Any]:
-    # flatten arrays to multi-value fields expected by the index
-    members = data.get("members") or []
-    facilities = data.get("facilities") or []
     contacts = data.get("contacts") or []
+    names = [c.get("name") for c in contacts if c.get("name")]
+    emails = [c.get("email") for c in contacts if c.get("email")]
+    phones = [c.get("phone") for c in contacts if c.get("phone")]
 
-    names  = [c.get("name")  for c in contacts if isinstance(c, dict) and c.get("name")]
-    emails = [c.get("email") for c in contacts if isinstance(c, dict) and c.get("email") and re.match(r"[^@]+@[^@]+\.[^@]+", c["email"])]
-    phones = [c.get("phone") for c in contacts if isinstance(c, dict) and c.get("phone")]
-
-    flat = {
+    return {
         "org_name": data.get("org_name"),
-        "country":  data.get("country"),
-        "address":  data.get("address"),
+        "country": data.get("country"),
+        "address": data.get("address"),
         "founded_year": data.get("founded_year"),
         "size": data.get("size"),
         "industry": data.get("industry"),
         "is_DU_member": data.get("is_DU_member"),
         "website": data.get("website"),
-
-        "members_name":  [m.get("name")  for m in members if isinstance(m, dict) and m.get("name")],
-        "members_title": [m.get("title") for m in members if isinstance(m, dict) and m.get("title")],
-        "members_role":  [m.get("role")  for m in members if isinstance(m, dict) and m.get("role")],
-
-        "facilities_name":  [f.get("name")  for f in facilities if isinstance(f, dict) and f.get("name")],
-        "facilities_type":  [f.get("type")  for f in facilities if isinstance(f, dict) and f.get("type")],
-        "facilities_usage": [f.get("usage") for f in facilities if isinstance(f, dict) and f.get("usage")],
-
-        "capabilities": data.get("capabilities") or [],
-        "projects":     data.get("projects") or [],
-        "awards":       data.get("awards") or [],
-        "services":     data.get("services") or [],
-        "contacts_name":  names,
+        "contacts_name": names,
         "contacts_email": emails,
         "contacts_phone": phones,
-        "addresses":    data.get("addresses") or [],
-        "notes":        data.get("notes")
+        "notes": data.get("notes"),
     }
-    return flat
 
-# ---------- main ingest ----------
-# 处理一个 PDF，并把所有内容写入同一个索引
+
+# ========== main ingest ==========
 def ingest_pdf_single_index(pdf_path: str, cfg: dict):
     source_id = str(uuid.uuid4())
     filename = os.path.basename(pdf_path)
 
-    # clients
-    aoai = AzureOpenAI(
-        api_key=cfg["openai_api_key"],
-        api_version=cfg["openai_api_version"],
-        azure_endpoint=cfg["openai_endpoint"],
-    )
-    embed_deploy = cfg["embedding_model"]
-    chat_deploy  = cfg["chat_model"]
+    # Embedding 用 Azure（部署名）
+    azure_embed_client = build_azure_embed_client(cfg)
 
+    # Chat 用 DeepSeek
+    deepseek_client = build_deepseek_chat_client(cfg)
+
+    embed_model = cfg["embedding_model"]                 # ⚠️ 这里是 Azure“部署名”
+    chat_model = cfg.get("chat_model", "deepseek-chat")  # DeepSeek 模型名
+    embed_dims = int(cfg.get("embedding_dimensions", 1536))
+
+    # Azure Search
     search = SearchClient(
         endpoint=f"https://{cfg['search_service_name']}.search.windows.net",
         index_name=cfg["index_name"],
-        credential=AzureKeyCredential(cfg["search_api_key"])
+        credential=AzureKeyCredential(cfg["search_api_key"]),
     )
 
-    # 1) extract full text & structured JSON (once)
+    # 1) PDF 提取文字
     full_text = extract_text_from_document_intelligence(pdf_path, cfg["docint_endpoint"], cfg["docint_key"])
-    struct_json = extract_org_json(full_text, aoai, chat_deploy)
-    flat_org = flatten_for_index(struct_json)
 
-    # 2) chunk & embed; attach flat_org fields to every chunk doc
-    chunks = chunk_text(full_text, max_chunk_size=5000, overlap=200)
+    # 2) JSON 抽取（DeepSeek）
+    if chat_model:
+        try:
+            struct_json = extract_org_json(full_text, deepseek_client, chat_model)
+        except Exception as e:
+            print(f"[warn] JSON 抽取失败：{e}")
+            struct_json = {}
+    else:
+        struct_json = {}
 
-    BATCH_EMBED, BATCH_UPLOAD = 16, 64
+    flat_org = flatten_for_index(struct_json) if struct_json else {}
+
+    # 3) chunk + embedding(Azure) + 上传
+    chunks = chunk_text(full_text)
     docs_batch = []
-
-    for i in tqdm(range(0, len(chunks), BATCH_EMBED), desc="Embedding"):
-        sub = chunks[i:i+BATCH_EMBED]
-        embs = batch_embeddings(aoai, embed_deploy, sub)
-
+    for i in tqdm(range(0, len(chunks), 16), desc="Embedding"):
+        sub = chunks[i:i + 16]
+        embs = batch_embeddings(azure_embed_client, embed_model, sub, embed_dims)
         for j, (ck, emb) in enumerate(zip(sub, embs)):
             idx = i + j
             doc = {
@@ -228,28 +274,20 @@ def ingest_pdf_single_index(pdf_path: str, cfg: dict):
                 "chunk_index": idx,
                 "content": ck,
                 "filepath": os.path.abspath(pdf_path),
-                "page_from": None,
-                "page_to": None,
                 "content_vector": emb,
-                # merge structured org fields per-chunk
-                **flat_org
+                **flat_org,
             }
             docs_batch.append(doc)
-
-            if len(docs_batch) >= BATCH_UPLOAD:
-                res = search.merge_or_upload_documents(docs_batch)
-                fail = [r for r in res if not r.succeeded]
-                if fail:
-                    print("[warn] upload failure sample:", fail[0].key, fail[0].error_message)
-                docs_batch = []
+        # 批量上传
+        if len(docs_batch) >= 64:
+            search.merge_or_upload_documents(docs_batch)
+            docs_batch = []
 
     if docs_batch:
-        res = search.merge_or_upload_documents(docs_batch)
-        fail = [r for r in res if not r.succeeded]
-        if fail:
-            print("[warn] upload failure sample:", fail[0].key, fail[0].error_message)
+        search.merge_or_upload_documents(docs_batch)
 
-    print(f"[ok] ingested {len(chunks)} chunks for {filename} | source_id={source_id}")
+    print(f"[ok] Ingested {len(chunks)} chunks for {filename} | source_id={source_id}")
+
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:

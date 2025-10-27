@@ -8,7 +8,8 @@
 每个脚本都是独立的，可以单独运行，并使用共同的JSON配置文件。
 
 ## 文件说明
-
+Deepseek Api
+https://platform.deepseek.com/api_keys
 - `create_index_routes.py` - 创建Azure AI Search索引
 - `upload_embedding_routes.py` - 处理PDF文件并上传嵌入向量
 - `query_routes.py` - 执行查询并返回结果
