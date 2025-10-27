@@ -6,13 +6,14 @@ from azure.core.credentials import AzureKeyCredential
 from azure.ai.documentintelligence import DocumentIntelligenceClient
 from azure.search.documents import SearchClient
 from openai import AzureOpenAI
+import mimetypes
 
 
 # ---------- PDF utilities ----------
 def extract_text_from_document_intelligence(pdf_path, endpoint, key):
     client = DocumentIntelligenceClient(endpoint=endpoint, credential=AzureKeyCredential(key))
     with open(pdf_path, "rb") as f:
-        poller = client.begin_analyze_document("prebuilt-layout", analyze_request=f, content_type="application/pdf")
+        poller = client.begin_analyze_document("prebuilt-document", analyze_request=f, content_type="application/pdf")
         result = poller.result()
     return "\n".join([line.content for p in result.pages for line in p.lines])
 
@@ -195,8 +196,8 @@ def ingest_pdf_single_index(pdf_path: str, cfg: dict):
         api_version=cfg["openai_api_version"],
         azure_endpoint=cfg["openai_endpoint"],
     )
-    embed_deploy = cfg["embedding_deployment"]
-    chat_deploy  = cfg["chat_deployment"]
+    embed_deploy = cfg["embedding_model"]
+    chat_deploy  = cfg["chat_model"]
 
     search = SearchClient(
         endpoint=f"https://{cfg['search_service_name']}.search.windows.net",

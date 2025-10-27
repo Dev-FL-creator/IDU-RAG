@@ -42,7 +42,7 @@ python create_index.py "C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\config.json
 处理单个PDF文件：
 
 ```bash
-python ingest_single.py "C:\path\to\机构手册.pdf" config.json
+python embed_and_ingest_chunks.py "C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\test_pdf.pdf" "C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\config.json"
 ```
 
 ### 第3步：执行查询
