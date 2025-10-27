@@ -15,30 +15,9 @@ from openai import OpenAI as OpenAIPlatform, AzureOpenAI
 
 # ========== PDF utilities ==========
 def extract_text_from_document_intelligence(pdf_path, endpoint, key):
-    """
-    先尝试新SDK Document Intelligence 的 prebuilt-document；
-    如果返回404（区域/资源不支持），自动回退到旧SDK Form Recognizer。
-    """
-    try:
-        client = DocumentIntelligenceClient(endpoint=endpoint, credential=AzureKeyCredential(key))
-        mime, _ = mimetypes.guess_type(pdf_path)
-        if not mime:
-            mime = "application/pdf"
-        with open(pdf_path, "rb") as f:
-            poller = client.begin_analyze_document(
-                model_id="prebuilt-document",
-                analyze_request=f,
-                content_type=mime
-            )
-            result = poller.result()
-        return "\n".join([line.content for p in result.pages for line in p.lines])
-    except ResourceNotFoundError as e:
-        print("[info] prebuilt-document on new SDK 404，自动回退到旧SDK：", e)
-
-    # 旧SDK回退
-    client_old = DocumentAnalysisClient(endpoint=endpoint, credential=AzureKeyCredential(key))
+    client = DocumentAnalysisClient(endpoint=endpoint, credential=AzureKeyCredential(key))
     with open(pdf_path, "rb") as f:
-        poller = client_old.begin_analyze_document("prebuilt-document", document=f)
+        poller = client.begin_analyze_document("prebuilt-document", document=f)
         result = poller.result()
 
     if getattr(result, "paragraphs", None):
