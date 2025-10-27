@@ -3,19 +3,19 @@ import os, sys, json, uuid, re
 from typing import List, Dict, Any
 from tqdm import tqdm
 from azure.core.credentials import AzureKeyCredential
+from azure.ai.documentintelligence import DocumentIntelligenceClient
 from azure.search.documents import SearchClient
 from openai import AzureOpenAI
-import PyPDF2
+
 
 # ---------- PDF utilities ----------
-def extract_text_from_pdf(pdf_path: str) -> str:
-    texts = []
+def extract_text_from_document_intelligence(pdf_path, endpoint, key):
+    client = DocumentIntelligenceClient(endpoint=endpoint, credential=AzureKeyCredential(key))
     with open(pdf_path, "rb") as f:
-        reader = PyPDF2.PdfReader(f)
-        for i in range(len(reader.pages)):
-            t = reader.pages[i].extract_text() or ""
-            texts.append(t)
-    return "\n".join(texts)
+        poller = client.begin_analyze_document("prebuilt-layout", analyze_request=f, content_type="application/pdf")
+        result = poller.result()
+    return "\n".join([line.content for p in result.pages for line in p.lines])
+
 
 def chunk_text(text: str, max_chunk_size=5000, overlap=200) -> List[str]:
     chunks = []
@@ -51,27 +51,61 @@ ORG_SCHEMA = {
         "org_name": {"type": "string"},
         "country": {"type": "string"},
         "address": {"type": "string"},
-        "founded_year": {"type": ["integer","null"]},
+        "founded_year": {"type": ["integer", "null"]},
         "size": {"type": "string"},
         "industry": {"type": "string"},
-        "is_DU_member": {"type": ["boolean","null"]},
-        "website": {"type": ["string","null"]},
-        "members": {"type":"array","items":{"type":"object","properties":{
-            "name":{"type":"string"},"title":{"type":"string"},"role":{"type":"string"},"affiliation":{"type":"string"}
-        }}},
-        "facilities": {"type":"array","items":{"type":"object","properties":{
-            "name":{"type":"string"},"type":{"type":"string"},"usage":{"type":"string"},"location":{"type":"string"}
-        }}},
-        "capabilities":{"type":"array","items":{"type":"string"}},
-        "projects":{"type":"array","items":{"type":"string"}},
-        "awards":{"type":"array","items":{"type":"string"}},
-        "services":{"type":"array","items":{"type":"string"}},
-        "contacts":{"type":"array","items":{"type":"object","properties":{
-            "name":{"type":"string"},"email":{"type":["string","null"]},"phone":{"type":["string","null"]},"title":{"type":["string","null"]}
-        }}}},
-        "addresses":{"type":"array","items":{"type":"string"}},
-        "notes":{"type":"string"}
+        "is_DU_member": {"type": ["boolean", "null"]},
+        "website": {"type": ["string", "null"]},
+
+        "members": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "title": {"type": "string"},
+                    "role": {"type": "string"},
+                    "affiliation": {"type": "string"}
+                }
+            }
+        },
+
+        "facilities": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "type": {"type": "string"},
+                    "usage": {"type": "string"},
+                    "location": {"type": "string"}
+                }
+            }
+        },
+
+        "capabilities": {"type": "array", "items": {"type": "string"}},
+        "projects": {"type": "array", "items": {"type": "string"}},
+        "awards": {"type": "array", "items": {"type": "string"}},
+        "services": {"type": "array", "items": {"type": "string"}},
+
+        "contacts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "email": {"type": ["string", "null"]},
+                    "phone": {"type": ["string", "null"]},
+                    "title": {"type": ["string", "null"]}
+                }
+            }
+        },
+
+        "addresses": {"type": "array", "items": {"type": "string"}},
+        "notes": {"type": "string"}
     }
+}
+
 
 PROMPT_SYSTEM = (
     "You are a precise information extraction assistant. "
@@ -171,7 +205,7 @@ def ingest_pdf_single_index(pdf_path: str, cfg: dict):
     )
 
     # 1) extract full text & structured JSON (once)
-    full_text = extract_text_from_pdf(pdf_path)
+    full_text = extract_text_from_document_intelligence(pdf_path, cfg["docint_endpoint"], cfg["docint_key"])
     struct_json = extract_org_json(full_text, aoai, chat_deploy)
     flat_org = flatten_for_index(struct_json)
 
