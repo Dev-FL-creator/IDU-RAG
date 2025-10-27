@@ -32,6 +32,7 @@ pip install azure-search-documents openai PyPDF2 requests
 
 ```bash
 python create_index_routes.py [配置文件路径]
+python create_index.py "C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\config.json"
 ```
 
 如果不提供配置文件路径，将默认使用当前目录下的 `config.json`。
@@ -41,13 +42,7 @@ python create_index_routes.py [配置文件路径]
 处理单个PDF文件：
 
 ```bash
-python upload_embedding_routes.py /path/to/your/document.pdf [配置文件路径]
-```
-
-处理整个目录中的PDF文件：
-
-```bash
-python upload_embedding_routes.py /path/to/pdf/directory [配置文件路径]
+python ingest_single.py "C:\path\to\机构手册.pdf" config.json
 ```
 
 ### 第3步：执行查询
