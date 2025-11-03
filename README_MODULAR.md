@@ -28,11 +28,15 @@ pip install azure-search-documents openai PyPDF2 requests
 
 
 ## 使用方法
+激活环境
+```bash
+azure_openai_env\Scripts\activate
+```
 
 ### 第1步：创建索引
 
 ```bash
-python create_index_routes.py [配置文件路径]
+python create_index.py [配置文件路径]
 python create_index.py "C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\config.json"
 ```
 
@@ -63,7 +67,7 @@ python query_routes.py "你的查询文本" [配置文件路径] [结果数量]
 
 ```bash
 # 步骤1：创建索引
-python create_index_routes.py project_config.json
+python create_index.py project_config.json
 
 # 步骤2：处理PDF文件
 python upload_embedding_routes.py ./pdf_files project_config.json

@@ -1,4 +1,4 @@
-# ingest_single.py —— 混合模式：Embedding 用 Azure（已部署），Chat 用 DeepSeek（OpenAI 兼容）
+# 混合模式：Embedding 用 Azure（已部署），Chat 用 DeepSeek（OpenAI 兼容）
 import os, sys, json, uuid, re, mimetypes
 from typing import List, Dict, Any
 from tqdm import tqdm
@@ -9,30 +9,105 @@ from azure.ai.documentintelligence import DocumentIntelligenceClient
 from azure.ai.formrecognizer import DocumentAnalysisClient
 from azure.core.exceptions import ResourceNotFoundError
 
-# ✅ DeepSeek 走 OpenAI 兼容客户端；Azure Embedding 走 AzureOpenAI
+# DeepSeek 走 OpenAI 兼容客户端；Azure Embedding 走 AzureOpenAI
 from openai import OpenAI as OpenAIPlatform, AzureOpenAI
 
 
 # ========== PDF utilities ==========
+def extract_text_from_pymupdf(pdf_path: str) -> str:
+    """使用PyMuPDF提取PDF文本"""
+    try:
+        import fitz
+        doc = fitz.open(pdf_path)
+        text_content = ""
+        total_pages = len(doc)
+        for page_num in range(total_pages):
+            page = doc.load_page(page_num)
+            text_content += page.get_text() + "\n"
+        doc.close()
+        print(f"[info] PyMuPDF成功提取{len(text_content)}字符（{total_pages}页）")
+        return text_content
+    except ImportError:
+        raise ImportError("PyMuPDF (fitz) 未安装，请运行: pip install PyMuPDF")
+    except Exception as e:
+        raise RuntimeError(f"PyMuPDF提取失败：{e}")
+
 def extract_text_from_document_intelligence(pdf_path, endpoint, key):
-    client = DocumentAnalysisClient(endpoint=endpoint, credential=AzureKeyCredential(key))
-    with open(pdf_path, "rb") as f:
-        poller = client.begin_analyze_document("prebuilt-document", document=f)
-        result = poller.result()
+    """使用Azure Document Intelligence提取文本"""
+    try:
+        client = DocumentAnalysisClient(endpoint=endpoint, credential=AzureKeyCredential(key))
+        with open(pdf_path, "rb") as f:
+            poller = client.begin_analyze_document("prebuilt-document", document=f)
+            result = poller.result()
 
-    if getattr(result, "paragraphs", None):
-        lines = [p.content for p in result.paragraphs if p.content]
-        return "\n".join(lines)
-    if getattr(result, "content", None):
-        return result.content
+        text_content = ""
+        if getattr(result, "paragraphs", None):
+            lines = [p.content for p in result.paragraphs if p.content]
+            text_content = "\n".join(lines)
+        elif getattr(result, "content", None):
+            text_content = result.content
+        else:
+            # 兜底：从表格提取
+            text_blocks = []
+            for table in getattr(result, "tables", []) or []:
+                for cell in table.cells:
+                    if cell.content:
+                        text_blocks.append(cell.content)
+            text_content = "\n".join(text_blocks)
+        
+        azure_pages = len(result.pages) if hasattr(result, 'pages') and result.pages else 0
+        print(f"[info] Azure Document Intelligence成功提取{len(text_content)}字符（{azure_pages}页）")
+        return text_content
+        
+    except Exception as e:
+        raise RuntimeError(f"Azure Document Intelligence提取失败：{e}")
 
-    # 兜底
-    text_blocks = []
-    for table in getattr(result, "tables", []) or []:
-        for cell in table.cells:
-            if cell.content:
-                text_blocks.append(cell.content)
-    return "\n".join(text_blocks)
+def extract_text_from_pdf(pdf_path: str, cfg: dict) -> str:
+    """
+    根据配置选择PDF文本提取方法
+    
+    cfg 支持的配置项：
+    - pdf_extraction_method: "pymupdf" | "azure_docint" (默认: "pymupdf")  
+    - pdf_extraction_fallback: true | false (默认: true)
+    """
+    method = cfg.get("pdf_extraction_method", "pymupdf").lower()
+    fallback = cfg.get("pdf_extraction_fallback", True)
+    
+    primary_method = method
+    backup_method = "azure_docint" if method == "pymupdf" else "pymupdf"
+    
+    print(f"[info] 使用PDF提取方法: {primary_method} (备选: {backup_method if fallback else '无'})")
+    
+    # 尝试主要方法
+    try:
+        if primary_method == "pymupdf":
+            return extract_text_from_pymupdf(pdf_path)
+        elif primary_method == "azure_docint":
+            return extract_text_from_document_intelligence(
+                pdf_path, cfg["docint_endpoint"], cfg["docint_key"]
+            )
+        else:
+            raise ValueError(f"不支持的PDF提取方法: {primary_method}")
+    
+    except Exception as e:
+        print(f"[warn] {primary_method} 提取失败：{e}")
+        
+        if not fallback:
+            raise e
+        
+        # 尝试备选方法
+        print(f"[info] 切换到备选方法: {backup_method}")
+        try:
+            if backup_method == "pymupdf":
+                return extract_text_from_pymupdf(pdf_path)
+            elif backup_method == "azure_docint":
+                return extract_text_from_document_intelligence(
+                    pdf_path, cfg["docint_endpoint"], cfg["docint_key"]
+                )
+        except Exception as ee:
+            raise RuntimeError(f"所有PDF提取方法都失败了。主要方法({primary_method})：{e}，备选方法({backup_method})：{ee}")
+        
+        raise e  # 如果没有备选方法成功，抛出原始错误
 
 
 def chunk_text(text: str, max_chunk_size=5000, overlap=200) -> List[str]:
@@ -139,8 +214,47 @@ ORG_SCHEMA = {
                     "email": {"type": ["string", "null"]},
                     "phone": {"type": ["string", "null"]},
                     "title": {"type": ["string", "null"]},
+                    "address": {"type": ["string", "null"]},
                 },
             },
+        },
+        "members": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "title": {"type": ["string", "null"]},
+                    "role": {"type": ["string", "null"]},
+                },
+            },
+        },
+        "facilities": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "type": {"type": ["string", "null"]},
+                    "usage": {"type": ["string", "null"]},
+                },
+            },
+        },
+        "capabilities": {
+            "type": "array",
+            "items": {"type": "string"}
+        },
+        "projects": {
+            "type": "array",
+            "items": {"type": "string"}
+        },
+        "awards": {
+            "type": "array",
+            "items": {"type": "string"}
+        },
+        "services": {
+            "type": "array",
+            "items": {"type": "string"}
         },
         "notes": {"type": "string"},
     },
@@ -148,45 +262,233 @@ ORG_SCHEMA = {
 
 PROMPT_SYSTEM = (
     "You are a precise information extraction assistant. "
-    "Given an organization brochure/manual text, extract a clean JSON object that follows the provided JSON schema. "
+    "Given an organization brochure/manual text, extract a comprehensive JSON object that follows the provided JSON schema. "
+    "Extract as much structured information as possible including:\n"
+    "- Basic organization details (name, country, address, etc.)\n"
+    "- Contact information (people with names, emails, phones, titles)\n"
+    "- Team members and their roles\n"
+    "- Facilities and equipment\n"
+    "- Capabilities and competencies\n"
+    "- Projects and initiatives\n"
+    "- Awards and recognitions\n"
+    "- Services offered\n"
     "If a field is missing, use null or an empty list. Do not add fields not in the schema. "
     "Return JSON only, no extra commentary."
 )
 
 def extract_org_json(full_text: str, deepseek_client: OpenAIPlatform, chat_model: str) -> Dict[str, Any]:
+    """使用DeepSeek智能提取组织信息，严格按照Schema返回"""
+    print(f"[info] 开始JSON抽取，文本长度: {len(full_text)} 字符")
+    
     try:
-        rsp = deepseek_client.responses.create(
-            model=chat_model,  # e.g., "deepseek-chat"
-            input=[
-                {"role": "system", "content": PROMPT_SYSTEM},
-                {"role": "user", "content": "Extract the organization information from the following text as strict JSON.\n\n" + full_text},
-            ],
-            response_format={"type": "json_schema", "json_schema": {"name": "OrgProfile", "schema": ORG_SCHEMA, "strict": True}},
-            max_output_tokens=2048,
-        )
-        raw = rsp.output[0].content[0].text
-        return json.loads(raw)
-    except Exception:
-        # fallback：chat.completions
+        # 限制文本长度避免token超限
+        text_for_extraction = full_text[:8000] if len(full_text) > 8000 else full_text
+        
+        # 将Schema转换为字符串，指导DeepSeek输出
+        schema_str = json.dumps(ORG_SCHEMA, indent=2, ensure_ascii=False)
+        
+        # 简化的系统提示，专注于智能提取
+        enhanced_prompt = f"""{PROMPT_SYSTEM}
+
+Please strictly follow this JSON Schema format for your response:
+
+{schema_str}
+
+Critical instructions:
+- Extract information ONLY if clearly present in the text
+- Use null for missing string/number fields
+- Use empty arrays [] for missing array fields  
+- Do NOT guess or infer information not explicitly stated
+- Field names must exactly match the schema
+- Return valid JSON only, no explanations"""
+        
+        print("[info] 使用DeepSeek进行智能信息提取...")
         rsp = deepseek_client.chat.completions.create(
             model=chat_model,
             messages=[
-                {"role": "system", "content": PROMPT_SYSTEM},
-                {"role": "user", "content": "Extract the organization information from the following text as strict JSON.\n\n" + full_text},
+                {"role": "system", "content": enhanced_prompt},
+                {"role": "user", "content": f"Extract organization information from this text:\n\n{text_for_extraction}"},
             ],
             response_format={"type": "json_object"},
             temperature=0.1,
+            max_tokens=2048,
         )
-        return json.loads(rsp.choices[0].message.content)
+        raw_content = rsp.choices[0].message.content
+        print(f"[info] DeepSeek提取成功，返回内容前200字符: {raw_content[:200]}...")
+        
+        result = json.loads(raw_content)
+        
+        # 简单验证Schema字段完整性
+        validated_result = ensure_schema_compliance(result)
+        print(f"[info] Schema验证完成: {json.dumps(validated_result, ensure_ascii=False)[:200]}...")
+        
+        return validated_result
+        
+    except Exception as e:
+        print(f"[error] DeepSeek提取失败：{e}")
+        
+        # 返回符合Schema的空结构
+        print("[warn] 返回符合Schema的空结构")
+        return get_empty_schema_result()
 
+def ensure_schema_compliance(data: Dict[str, Any]) -> Dict[str, Any]:
+    """确保返回的数据符合ORG_SCHEMA结构，但不进行额外推断"""
+    
+    # 定义Schema中所有字段的默认空值
+    schema_defaults = {
+        "org_name": None,
+        "country": None, 
+        "address": None,
+        "founded_year": None,
+        "size": None,
+        "industry": None,
+        "is_DU_member": None,
+        "website": None,
+        "contacts": [],
+        "members": [],
+        "facilities": [],
+        "capabilities": [],
+        "projects": [],
+        "awards": [],
+        "services": [],
+        "notes": None
+    }
+    
+    result = {}
+    
+    # 处理每个字段，确保类型正确
+    for field, default_value in schema_defaults.items():
+        if field in data and data[field] is not None:
+            value = data[field]
+            
+            # 根据字段类型进行基本验证
+            if field in ["contacts", "members", "facilities"]:
+                # 对象数组字段
+                if isinstance(value, list):
+                    result[field] = [item for item in value if isinstance(item, dict)]
+                else:
+                    result[field] = []
+                    
+            elif field in ["capabilities", "projects", "awards", "services"]:
+                # 字符串数组字段
+                if isinstance(value, list):
+                    result[field] = [str(item) for item in value if item]
+                elif isinstance(value, str) and value.strip():
+                    result[field] = [value.strip()]
+                else:
+                    result[field] = []
+                    
+            elif field == "founded_year":
+                # 整数字段
+                if isinstance(value, int):
+                    result[field] = value
+                elif isinstance(value, str) and value.isdigit():
+                    result[field] = int(value)
+                else:
+                    result[field] = None
+                    
+            elif field == "is_DU_member":
+                # 布尔字段
+                if isinstance(value, bool):
+                    result[field] = value
+                elif isinstance(value, str):
+                    result[field] = value.lower() in ["true", "yes", "1", "是"]
+                else:
+                    result[field] = None
+                    
+            else:
+                # 字符串字段
+                result[field] = str(value).strip() if value else None
+        else:
+            # 使用默认空值
+            result[field] = default_value
+    
+    return result
+
+def get_empty_schema_result() -> Dict[str, Any]:
+    """返回符合Schema的空结构"""
+    return {
+        "org_name": None,
+        "country": None,
+        "address": None,
+        "founded_year": None,
+        "size": None,
+        "industry": None,
+        "is_DU_member": None,
+        "website": None,
+        "contacts": [],
+        "members": [],
+        "facilities": [],
+        "capabilities": [],
+        "projects": [],
+        "awards": [],
+        "services": [],
+        "notes": None
+    }
 
 def flatten_for_index(data: Dict[str, Any]) -> Dict[str, Any]:
+    """将抽取的组织数据扁平化为索引字段格式"""
+    
+    # 处理contacts数组
     contacts = data.get("contacts") or []
-    names = [c.get("name") for c in contacts if c.get("name")]
-    emails = [c.get("email") for c in contacts if c.get("email")]
-    phones = [c.get("phone") for c in contacts if c.get("phone")]
-
+    contacts_name = [c.get("name") for c in contacts if c.get("name")]
+    contacts_email = [c.get("email") for c in contacts if c.get("email")]
+    contacts_phone = [c.get("phone") for c in contacts if c.get("phone")]
+    
+    # 处理members数组（如果存在）
+    members = data.get("members", []) or data.get("people", []) or []
+    members_name = [m.get("name") for m in members if isinstance(m, dict) and m.get("name")]
+    members_title = [m.get("title") for m in members if isinstance(m, dict) and m.get("title")]
+    members_role = [m.get("role") for m in members if isinstance(m, dict) and m.get("role")]
+    
+    # 处理facilities数组（如果存在）
+    facilities = data.get("facilities", []) or []
+    facilities_name = [f.get("name") for f in facilities if isinstance(f, dict) and f.get("name")]
+    facilities_type = [f.get("type") for f in facilities if isinstance(f, dict) and f.get("type")]
+    facilities_usage = [f.get("usage") for f in facilities if isinstance(f, dict) and f.get("usage")]
+    
+    # 处理其他数组字段
+    capabilities = data.get("capabilities", []) or []
+    if isinstance(capabilities, str):
+        capabilities = [capabilities]
+    elif not isinstance(capabilities, list):
+        capabilities = []
+        
+    projects = data.get("projects", []) or data.get("key_projects", []) or []
+    if isinstance(projects, str):
+        projects = [projects]
+    elif not isinstance(projects, list):
+        projects = []
+        
+    awards = data.get("awards", []) or []
+    if isinstance(awards, str):
+        awards = [awards]
+    elif not isinstance(awards, list):
+        awards = []
+        
+    services = data.get("services", []) or []
+    if isinstance(services, str):
+        services = [services]
+    elif not isinstance(services, list):
+        services = []
+        
+    # 处理addresses（可能来自多个源）
+    addresses = []
+    if data.get("address"):
+        addresses.append(data.get("address"))
+    if data.get("addresses"):
+        if isinstance(data.get("addresses"), list):
+            addresses.extend(data.get("addresses"))
+        else:
+            addresses.append(str(data.get("addresses")))
+    
+    # 从contacts中提取地址
+    for contact in contacts:
+        if isinstance(contact, dict) and contact.get("address"):
+            addresses.append(contact.get("address"))
+    
     return {
+        # 基本组织信息
         "org_name": data.get("org_name"),
         "country": data.get("country"),
         "address": data.get("address"),
@@ -195,10 +497,35 @@ def flatten_for_index(data: Dict[str, Any]) -> Dict[str, Any]:
         "industry": data.get("industry"),
         "is_DU_member": data.get("is_DU_member"),
         "website": data.get("website"),
-        "contacts_name": names,
-        "contacts_email": emails,
-        "contacts_phone": phones,
+        
+        # 人员信息
+        "members_name": members_name,
+        "members_title": members_title,
+        "members_role": members_role,
+        
+        # 设施信息
+        "facilities_name": facilities_name,
+        "facilities_type": facilities_type,
+        "facilities_usage": facilities_usage,
+        
+        # 能力和项目
+        "capabilities": capabilities,
+        "projects": projects,
+        "awards": awards,
+        "services": services,
+        
+        # 联系信息
+        "contacts_name": contacts_name,
+        "contacts_email": contacts_email,
+        "contacts_phone": contacts_phone,
+        
+        # 地址和备注
+        "addresses": addresses,
         "notes": data.get("notes"),
+        
+        # 页码信息（目前设为None，未来可以从PDF中提取）
+        "page_from": None,
+        "page_to": None,
     }
 
 
@@ -213,7 +540,7 @@ def ingest_pdf_single_index(pdf_path: str, cfg: dict):
     # Chat 用 DeepSeek
     deepseek_client = build_deepseek_chat_client(cfg)
 
-    embed_model = cfg["embedding_model"]                 # ⚠️ 这里是 Azure“部署名”
+    embed_model = cfg["embedding_model"]                 # Azure Openai Embedding“部署名”
     chat_model = cfg.get("chat_model", "deepseek-chat")  # DeepSeek 模型名
     embed_dims = int(cfg.get("embedding_dimensions", 1536))
 
@@ -224,8 +551,8 @@ def ingest_pdf_single_index(pdf_path: str, cfg: dict):
         credential=AzureKeyCredential(cfg["search_api_key"]),
     )
 
-    # 1) PDF 提取文字
-    full_text = extract_text_from_document_intelligence(pdf_path, cfg["docint_endpoint"], cfg["docint_key"])
+    # 1) PDF 提取文字（根据配置选择方法）
+    full_text = extract_text_from_pdf(pdf_path, cfg)
 
     # 2) JSON 抽取（DeepSeek）
     if chat_model:
@@ -240,7 +567,17 @@ def ingest_pdf_single_index(pdf_path: str, cfg: dict):
     flat_org = flatten_for_index(struct_json) if struct_json else {}
 
     # 3) chunk + embedding(Azure) + 上传
-    chunks = chunk_text(full_text)
+    # 动态调整chunk大小：如果文档较小，使用更小的chunk
+    text_len = len(full_text)
+    if text_len <= 3000:
+        chunk_size = max(500, text_len // 3)  # 分成大约3个chunks
+        overlap = min(100, chunk_size // 10)
+    else:
+        chunk_size = 5000
+        overlap = 200
+    
+    print(f"文档长度: {text_len} 字符，使用chunk大小: {chunk_size}")
+    chunks = chunk_text(full_text, max_chunk_size=chunk_size, overlap=overlap)
     docs_batch = []
     for i in tqdm(range(0, len(chunks), 16), desc="Embedding"):
         sub = chunks[i:i + 16]
