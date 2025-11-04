@@ -33,7 +33,7 @@ def extract_text_from_pymupdf(pdf_path: str) -> str:
         raise RuntimeError(f"PyMuPDF提取失败：{e}")
 
 def extract_text_from_document_intelligence(pdf_path, endpoint, key):
-    """使用Azure Document Intelligence提取文本"""
+    """使用Azure Document Intelligence提取文本，暂时不用 目前套餐只能处理单页文档"""
     try:
         client = DocumentAnalysisClient(endpoint=endpoint, credential=AzureKeyCredential(key))
         with open(pdf_path, "rb") as f:
@@ -141,7 +141,7 @@ def chunk_text(text: str, max_chunk_size=5000, overlap=200) -> List[str]:
 # ========== Clients ==========
 def build_azure_embed_client(cfg: dict) -> AzureOpenAI:
     """
-    Azure Embedding 客户端（需要你已在 Azure 上部署 embedding 模型）。
+    Azure Embedding 客户端（Azure 上需要部署 embedding 模型）。
     cfg 需包含：openai_api_key, openai_api_version, openai_endpoint
     """
     return AzureOpenAI(
@@ -176,7 +176,7 @@ def _pad_or_truncate(vecs: List[List[float]], target_dim: int) -> List[List[floa
 def batch_embeddings(azure_embed_client: AzureOpenAI, model: str, texts: List[str], target_dim: int) -> List[List[float]]:
     """
     - 使用 Azure 部署好的 embedding （model=部署名）
-    - 失败时回退本地 sentence-transformers（需已安装）
+    - 失败时回退本地 sentence-transformers
     """
     try:
         resp = azure_embed_client.embeddings.create(model=model, input=texts)
@@ -282,8 +282,8 @@ def extract_org_json(full_text: str, deepseek_client: OpenAIPlatform, chat_model
     
     try:
         # 限制文本长度避免token超限
-        text_for_extraction = full_text[:8000] if len(full_text) > 8000 else full_text
-        
+        # text_for_extraction = full_text[:8000] if len(full_text) > 8000 else full_text
+        text_for_extraction = full_text
         # 将Schema转换为字符串，指导DeepSeek输出
         schema_str = json.dumps(ORG_SCHEMA, indent=2, ensure_ascii=False)
         
