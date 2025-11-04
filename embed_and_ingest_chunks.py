@@ -176,21 +176,10 @@ def _pad_or_truncate(vecs: List[List[float]], target_dim: int) -> List[List[floa
 def batch_embeddings(azure_embed_client: AzureOpenAI, model: str, texts: List[str], target_dim: int) -> List[List[float]]:
     """
     - 使用 Azure 部署好的 embedding （model=部署名）
-    - 失败时回退本地 sentence-transformers
     """
-    try:
-        resp = azure_embed_client.embeddings.create(model=model, input=texts)
-        vecs = [item.embedding for item in resp.data]
-        return _pad_or_truncate(vecs, target_dim)
-    except Exception as e:
-        print("[warn] Azure embedding 失败，回退本地 sentence-transformers：", e)
-        try:
-            from sentence_transformers import SentenceTransformer
-            st = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")  # 384维
-            vecs = st.encode(texts, normalize_embeddings=True).tolist()
-            return _pad_or_truncate(vecs, target_dim)
-        except Exception as ee:
-            raise RuntimeError("本地 embedding 失败，请安装 sentence-transformers 或检查 Azure 部署与密钥") from ee
+    resp = azure_embed_client.embeddings.create(model=model, input=texts)
+    vecs = [item.embedding for item in resp.data]
+    return _pad_or_truncate(vecs, target_dim)
 
 
 # ========== JSON 抽取（DeepSeek Chat）==========
