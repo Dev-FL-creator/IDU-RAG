@@ -1,0 +1,51 @@
+=== 最终验证后的结果 ===
+==================================================
+
+{
+  "org_name": "Access e.V.",
+  "country": "Germany",
+  "address": "Intzestraße 5, Aachen",
+  "founded_year": 1986,
+  "size": null,
+  "industry": "Materialforschung und innovative Fertigungsverfahren",
+  "is_DU_member": null,
+  "website": null,
+  "contacts": [],
+  "members": [],
+  "facilities": [
+    {
+      "name": "Access e.V. Hauptsitz",
+      "type": "Hauptsitz",
+      "usage": "Verwaltung, Forschungslabore, Werkstätten, Analytik und Qualitätskontrolle, Gefüge- und Prozesssimulation"
+    },
+    {
+      "name": "Access e.V. TechCenter",
+      "type": "TechCenter",
+      "usage": "Prototypenentwicklung und Kleinserienproduktion, Pilotanlagen für diverse Gießverfahren, Produktion keramischer Formschalen, Werkstoffentwicklung, Wärmebehandlung, Prozesssimulation, Prozessbeschleunigung, Feinguss, Additive Modell- und Formschalenfertigung für den Feinguss"
+    },
+    {
+      "name": "Access e.V. Cottbus",
+      "type": "Standort",
+      "usage": null
+    }
+  ],
+  "capabilities": [
+    "Grundlagen der Erstarrung",
+    "Gefügesimulation",
+    "Werkstoffentwicklung",
+    "Prozesssimulation",
+    "Prozessentwicklung & Prototypenfertigung",
+    "Material-Charakterisierung"
+  ],
+  "projects": [],
+  "awards": [],
+  "services": [
+    "Grundlagen der Erstarrung",
+    "Gefügesimulation",
+    "Werkstoffentwicklung",
+    "Prozesssimulation",
+    "Prozessentwicklung & Prototypenfertigung",
+    "Material-Charakterisierung"
+  ],
+  "notes": "Access e.V. ist ein gemeinnütziges, unabhängiges Forschungsinstitut, Mitglied der Zuse-Gemeinschaft, und spezialisiert auf Materialforschung und innovative Fertigungsverfahren für metallische Werkstoffe."
+}
