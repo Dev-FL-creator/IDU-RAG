@@ -1,5 +1,5 @@
 # 混合模式：Embedding 用 Azure（已部署），Chat 用 DeepSeek（OpenAI 兼容）
-import os, sys, json, uuid, re, mimetypes
+import os, sys, json, uuid, re, mimetypes, glob
 from typing import List, Dict, Any
 from tqdm import tqdm
 
@@ -520,7 +520,7 @@ def flatten_for_index(data: Dict[str, Any]) -> Dict[str, Any]:
 
 # ========== main ingest ==========
 def ingest_pdf_single_index(pdf_path: str, cfg: dict):
-    source_id = str(uuid.uuid4())
+    source_id = str(uuid.uuid4()) # 每个PDF生成唯一ID
     filename = os.path.basename(pdf_path)
 
     # Embedding 用 Azure（部署名）
@@ -574,13 +574,13 @@ def ingest_pdf_single_index(pdf_path: str, cfg: dict):
         for j, (ck, emb) in enumerate(zip(sub, embs)):
             idx = i + j
             doc = {
-                "id": f"{source_id}-{idx}",
-                "source_id": source_id,
-                "chunk_index": idx,
-                "content": ck,
-                "filepath": os.path.abspath(pdf_path),
-                "content_vector": emb,
-                **flat_org,
+                "id": f"{source_id}-{idx}",  # 每个chunk都会标记相同的source_id和chunk的唯一ID
+                "source_id": source_id,      # PDF文档的唯一标识
+                "chunk_index": idx,          # chunk在文档中的位置
+                "content": ck,               # chunk文本内容
+                "filepath": os.path.abspath(pdf_path),  # PDF文件路径
+                "content_vector": emb,       # Embedding向量
+                **flat_org,                  # 其他的组织信息字段
             }
             docs_batch.append(doc)
         # 批量上传
@@ -594,11 +594,59 @@ def ingest_pdf_single_index(pdf_path: str, cfg: dict):
     print(f"[ok] Ingested {len(chunks)} chunks for {filename} | source_id={source_id}")
 
 
+def ingest_folder_batch(folder_path: str, cfg: dict):
+    """批量处理文件夹中的所有PDF文件"""
+    
+    # 查找文件夹中的所有PDF文件
+    pdf_files = []
+    for ext in ['*.pdf', '*.PDF']:
+        pdf_files.extend(glob.glob(os.path.join(folder_path, ext)))
+    
+    if not pdf_files:
+        print(f"[warn] 在 {folder_path} 中没有找到PDF文件")
+        return
+    
+    print(f"[info] 找到 {len(pdf_files)} 个PDF文件:")
+    for i, pdf_file in enumerate(pdf_files, 1):
+        print(f"  {i}. {os.path.basename(pdf_file)}")
+    
+    # 批量处理每个PDF
+    success_count = 0
+    error_count = 0
+    
+    for i, pdf_file in enumerate(pdf_files, 1):
+        try:
+            print(f"\n[info] 处理第 {i}/{len(pdf_files)} 个文件: {os.path.basename(pdf_file)}")
+            ingest_pdf_single_index(pdf_file, cfg)
+            success_count += 1
+            print(f"[ok] 成功处理: {os.path.basename(pdf_file)}")
+            
+        except Exception as e:
+            error_count += 1
+            print(f"[error] 处理失败: {os.path.basename(pdf_file)} - {e}")
+            continue
+    
+    print(f"\n[info] 批量处理完成:")
+    print(f"  成功: {success_count} 个文件")
+    print(f"  失败: {error_count} 个文件")
+    print(f"  总计: {len(pdf_files)} 个文件")
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("Usage: python ingest_single.py <pdf_path> <config.json>")
+        print("Usage:")
+        print("  单个文件: python embed_and_ingest_chunks.py <pdf_path> <config.json>")
+        print("  批量文件夹: python embed_and_ingest_chunks.py --folder <folder_path> <config.json>")
         sys.exit(1)
-    pdf, cfgp = sys.argv[1], sys.argv[2]
-    with open(cfgp, "r", encoding="utf-8") as f:
+    
+    with open(sys.argv[-1], "r", encoding="utf-8") as f:
         cfg = json.load(f)
-    ingest_pdf_single_index(pdf, cfg)
+    
+    if len(sys.argv) == 4 and sys.argv[1] == "--folder":
+        # 批量模式
+        folder_path = sys.argv[2]
+        ingest_folder_batch(folder_path, cfg)
+    else:
+        # 单文件模式
+        pdf_path = sys.argv[1]
+        ingest_pdf_single_index(pdf_path, cfg)
