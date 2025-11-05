@@ -221,27 +221,32 @@ def chunk_text(text: str, max_chunk_size=5000, overlap=200) -> List[str]:
 
 
 def clean_text(text: str) -> str:
-    """清理提取文本中的常见网页/版面噪音"""
+    """清理从网页型 PDF 提取的噪音文本"""
     if not text:
         return text
     t = text
 
-    # 1. 去掉 :selected:、:: 等标记
-    t = re.sub(r":selected:", "", t)
-    t = re.sub(r"\s+:\s+", ": ", t)
+    # 1. 去掉网页或按钮残留，如 :selected:、UIGKEITEN、ENGLISH 等
+    t = re.sub(r":selected:", "", t, flags=re.I)
+    t = re.sub(r"(?i)\b(ACCESS|KARRIERE|NEWS|NEUIGKEITEN|ENGLISH|DEUTSCH|KONTAKT|ÜBER\s+UNS|FOR­SCHUNG\s*&\s*ENTWICKLUNG|FORSCHUNG\s*&\s*ENTWICKLUNG|DIENSTLEISTUNGEN\s*&\s*PRODUKTE|PRODUKTE|LIGHTME|IMPRESSUM)\b", "", t)
 
-    # 2. 去掉多余符号与温度、图表残留
-    t = re.sub(r"Temperature\s*\(C\).*?(?=\n[A-Z]|$)", "", t, flags=re.S)
+    # 2. 去掉连续的符号/标题线（-、•、=等）
+    t = re.sub(r"[-•=]{2,}", "", t)
 
-    # 3. 去掉页眉页脚或导航类词
-    t = re.sub(r"\b(KARRIERE|ENGLISH|DEUTSCH|KONTAKT|ÜBER UNS|NEWS|ACCESS)\b", "", t, flags=re.I)
+    # 3. 删除残留网址、邮箱标志符后多余换行
+    t = re.sub(r"([A-Za-z0-9_.+-]+@[A-Za-z0-9-]+\.[A-Za-z0-9-.]+)\s*", r"\1 ", t)
 
-    # 4. 连续空行压缩
+    # 4. 去掉“Temperature (C)”表格等数值垃圾
+    t = re.sub(r"Temperature\s*\(C\).*?(?=\n[A-ZÄÖÜ]|$)", "", t, flags=re.S)
+
+    # 5. 压缩多余空行
     t = re.sub(r"\n{2,}", "\n", t)
 
-    # 5. 删除首尾多余空格
-    t = t.strip()
-    return t
+    # 6. 删除多余空格
+    t = re.sub(r"[ \t]+", " ", t)
+
+    return t.strip()
+
 
 
 # ========== Clients ==========
@@ -923,27 +928,31 @@ if __name__ == "__main__":
 #     return chunks
 
 # def clean_text(text: str) -> str:
-#     """清理提取文本中的常见网页/版面噪音"""
+#     """清理从网页型 PDF 提取的噪音文本"""
 #     if not text:
 #         return text
 #     t = text
 
-#     # 1. 去掉 :selected:、:: 等标记
-#     t = re.sub(r":selected:", "", t)
-#     t = re.sub(r"\s+:\s+", ": ", t)
+#     # 1. 去掉网页或按钮残留，如 :selected:、UIGKEITEN、ENGLISH 等
+#     t = re.sub(r":selected:", "", t, flags=re.I)
+#     t = re.sub(r"(?i)\b(ACCESS|KARRIERE|NEWS|NEUIGKEITEN|ENGLISH|DEUTSCH|KONTAKT|ÜBER\s+UNS|FOR­SCHUNG\s*&\s*ENTWICKLUNG|FORSCHUNG\s*&\s*ENTWICKLUNG|DIENSTLEISTUNGEN\s*&\s*PRODUKTE|PRODUKTE|LIGHTME|IMPRESSUM)\b", "", t)
 
-#     # 2. 去掉多余符号与温度、图表残留
-#     t = re.sub(r"Temperature\s*\(C\).*?(?=\n[A-Z]|$)", "", t, flags=re.S)
+#     # 2. 去掉连续的符号/标题线（-、•、=等）
+#     t = re.sub(r"[-•=]{2,}", "", t)
 
-#     # 3. 去掉页眉页脚或导航类词
-#     t = re.sub(r"\b(KARRIERE|ENGLISH|DEUTSCH|KONTAKT|ÜBER UNS|NEWS|ACCESS)\b", "", t, flags=re.I)
+#     # 3. 删除残留网址、邮箱标志符后多余换行
+#     t = re.sub(r"([A-Za-z0-9_.+-]+@[A-Za-z0-9-]+\.[A-Za-z0-9-.]+)\s*", r"\1 ", t)
 
-#     # 4. 连续空行压缩
+#     # 4. 去掉“Temperature (C)”表格等数值垃圾
+#     t = re.sub(r"Temperature\s*\(C\).*?(?=\n[A-ZÄÖÜ]|$)", "", t, flags=re.S)
+
+#     # 5. 压缩多余空行
 #     t = re.sub(r"\n{2,}", "\n", t)
 
-#     # 5. 删除首尾多余空格
-#     t = t.strip()
-#     return t
+#     # 6. 删除多余空格
+#     t = re.sub(r"[ \t]+", " ", t)
+
+#     return t.strip()
 
 
 
