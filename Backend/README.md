@@ -30,14 +30,14 @@ pip install azure-search-documents openai PyPDF2 requests
 ## 使用方法
 激活环境
 ```bash
-azure_openai_env\Scripts\activate
+Backend\azure_openai_env\Scripts\activate
 ```
 
 ### 第1步：创建索引
 
 ```bash
 python create_index.py [配置文件路径]
-python create_index.py "C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\config.json"
+python Backend/create_index.py "C:\Users\Administrator\Desktop\IDU-RAG\Backend\config.json"
 ```
 
 如果不提供配置文件路径，将默认使用当前目录下的 `config.json`。
@@ -47,12 +47,12 @@ python create_index.py "C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\config.json
 处理单个PDF文件：
 
 ```bash
-python embed_and_ingest_chunks.py "C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\test_pdf.pdf" "C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\config.json"
+python Backend/embed_and_ingest_chunks.py "C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\test_pdf.pdf" "C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\config.json"
 ```
 
 批量处理文档下所有pdf文件：
 ```bash
-python embed_and_ingest_chunks.py --folder "C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\Test Data\Institute VB\ACCESS Authorized" "C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\config.json" 
+python Backend/embed_and_ingest_chunks.py --folder "C:\Users\Administrator\Desktop\IDU-RAG\Test Data\Institute VB\ACC Equipments" "C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\config.json" 
 ```
 
 ### 第3步：执行查询
