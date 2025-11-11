@@ -1,12 +1,48 @@
-# Ignore everything
-*
+# Test Data and temporary files
+Test Data/
+"Test Data"/
 
-# But keep Backend folder and its contents
-!Backend/
-!Backend/**
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
 
-# Keep this gitignore file
-!.gitignore
+# Virtual Environment (Backend specific)
+Backend/azure_openai_env/
+Backend/venv/
+Backend/env/
 
-# Keep README if exists
-!README.md
+# Debug outputs
+debug_outputs/
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/settings.json
+.idea/
+
+# Node.js (Frontend specific)
+Frontend/node_modules/
+Frontend/.next/
+Frontend/dist/
+Frontend/build/
+
+# Keep both Backend and Frontend folders tracked
+# This allows both computers to work on their respective parts
