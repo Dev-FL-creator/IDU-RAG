@@ -1,0 +1,178 @@
+# Ignore everything# Python# 配置文件 - 包含敏感信息如API密钥
+
+*
+
+__pycache__/config.json
+
+# But keep Backend folder and its contents
+
+!Backend/*.py[cod]
+
+!Backend/**
+
+*$py.class# 测试数据文件夹
+
+# Keep this gitignore file
+
+!.gitignore*.soTest Data/
+
+
+
+# Keep README if exists.Python"Test Data"/
+
+!README.md
+build/
+
+develop-eggs/# 环境变量文件
+
+dist/.env
+
+downloads/.env.local
+
+eggs/.env.development
+
+.eggs/.env.test
+
+lib/.env.production
+
+lib64/
+
+parts/# Python 相关
+
+sdist/__pycache__/
+
+var/*.py[cod]
+
+wheels/*$py.class
+
+*.egg-info/*.so
+
+.installed.cfg.Python
+
+*.eggbuild/
+
+develop-eggs/
+
+# Virtual Environmentdist/
+
+venv/downloads/
+
+env/eggs/
+
+ENV/.eggs/
+
+azure_openai_env/lib/
+
+lib64/
+
+# IDEparts/
+
+.vscode/sdist/
+
+.idea/var/
+
+*.swpwheels/
+
+*.swo*.egg-info/
+
+.installed.cfg
+
+# OS*.egg
+
+.DS_Store
+
+Thumbs.db# 虚拟环境
+
+*.tmpazure_openai_env/
+
+*.logvenv/
+
+env/
+
+# Test Data (忽略测试数据文件夹)ENV/
+
+Test Data/env.bak/
+
+"Test Data"/venv.bak/
+
+
+
+# Debug outputs (忽略调试输出)# IDE 文件
+
+debug_outputs/.vscode/
+
+.idea/
+
+# Temporary files*.swp
+
+*.bak*.swo
+
+*.backup*~
+
+temp/
+
+tmp/# 日志文件
+
+*.log
+
+# Jupyter Notebooklogs/
+
+.ipynb_checkpoints
+
+# 操作系统生成的文件
+
+# Environment variables.DS_Store
+
+.env.DS_Store?
+
+.env.local._*
+
+.env.development.local.Spotlight-V100
+
+.env.test.local.Trashes
+
+.env.production.localehthumbs.db
+
+Thumbs.db
+
+# Logs
+
+logs/# 临时文件
+
+*.log*.tmp
+
+npm-debug.log**.temp
+
+yarn-debug.log*temp/
+
+yarn-error.log*tmp/
+
+
+
+# Runtime data# 备份文件
+
+pids/*.backup
+
+*.pid*.bak
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+
+# Azure
+.azure/
+
+# Frontend (如果不需要同步前端代码)
+# Frontend/
+# node_modules/
+# package-lock.json
+# yarn.lock
+
+# 保留重要的配置和后端文件
+!Backend/
+!config.json
+!*.py
+!README.md
+!requirements.txt
+!.gitignore
