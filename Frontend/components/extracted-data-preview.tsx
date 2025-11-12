@@ -25,6 +25,9 @@ export function ExtractedDataPreview({
 }: ExtractedDataPreviewProps) {
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
   const [editData, setEditData] = useState<ExtractedData[]>(extractedData)
+  const [selectedFiles, setSelectedFiles] = useState<boolean[]>(
+    extractedData.map(item => !item.error)
+  )
 
   const handleEdit = (index: number) => {
     setEditingIndex(index)
@@ -61,6 +64,29 @@ export function ExtractedDataPreview({
 
   const validDataCount = editData.filter(item => !item.error).length
   const errorCount = editData.filter(item => item.error).length
+  const selectedValidCount = editData.filter((item, index) => selectedFiles[index] && !item.error).length
+  const allValidSelected = validDataCount > 0 && selectedValidCount === validDataCount
+
+  const toggleFileSelection = (index: number) => {
+    setSelectedFiles(prev => {
+      const newSelected = [...prev]
+      newSelected[index] = !newSelected[index]
+      return newSelected
+    })
+  }
+
+  const toggleAllValidFiles = () => {
+    setSelectedFiles(prev => {
+      return editData.map((item, index) => 
+        item.error ? false : !allValidSelected
+      )
+    })
+  }
+
+  const handleConfirmSelected = () => {
+    const selectedData = editData.filter((item, index) => selectedFiles[index] && !item.error)
+    onConfirm(selectedData)
+  }
 
   return (
     <div className="space-y-6">
@@ -69,10 +95,26 @@ export function ExtractedDataPreview({
         <div>
           <h2 className="text-2xl font-semibold">Extracted Data Preview</h2>
           <p className="text-sm text-muted-foreground">
-            Review and edit the extracted information before indexing
+            Review and edit the extracted information from {editData.length} PDF file{editData.length !== 1 ? 's' : ''} before indexing
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          {validDataCount > 1 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={toggleAllValidFiles}
+              className="h-8"
+            >
+              {allValidSelected ? 'Unselect All' : 'Select All Valid'}
+            </Button>
+          )}
+          <Badge variant="outline" className="text-xs">
+            {editData.length} Files
+          </Badge>
+          <Badge variant={selectedValidCount > 0 ? "default" : "secondary"}>
+            {selectedValidCount} Selected
+          </Badge>
           <Badge variant={validDataCount > 0 ? "default" : "secondary"}>
             {validDataCount} Valid
           </Badge>
@@ -90,11 +132,24 @@ export function ExtractedDataPreview({
           <Card key={index} className={item.error ? "border-red-200" : ""}>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <FileText className="h-5 w-5 text-red-500" />
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 bg-primary/10 text-primary rounded-full flex items-center justify-center text-sm font-medium">
+                      {index + 1}
+                    </div>
+                    <FileText className="h-5 w-5 text-red-500" />
+                  </div>
                   <CardTitle className="text-lg">{item.filename}</CardTitle>
                 </div>
                 <div className="flex items-center gap-2">
+                  {!item.error && (
+                    <input
+                      type="checkbox"
+                      checked={selectedFiles[index]}
+                      onChange={() => toggleFileSelection(index)}
+                      className="w-4 h-4 rounded border-gray-300 text-primary focus:ring-primary"
+                    />
+                  )}
                   {item.text_length && (
                     <Badge variant="outline" className="text-xs">
                       {Math.round(item.text_length / 1000)}k chars
@@ -134,9 +189,28 @@ export function ExtractedDataPreview({
             
             <CardContent>
               {item.error ? (
-                <div className="flex items-center gap-2 text-red-600">
-                  <AlertCircle className="h-4 w-4" />
-                  <span className="text-sm">{item.error}</span>
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-red-600">
+                    <AlertCircle className="h-4 w-4" />
+                    <span className="text-sm font-medium">{item.error}</span>
+                  </div>
+                  {item.raw_text_preview && (
+                    <div className="mt-3">
+                      <label className="text-sm font-medium text-muted-foreground">Extracted Text Preview:</label>
+                      <div className="mt-1 p-3 bg-muted/50 rounded text-xs font-mono text-muted-foreground max-h-32 overflow-y-auto">
+                        {item.raw_text_preview}
+                      </div>
+                    </div>
+                  )}
+                  <div className="text-xs text-muted-foreground">
+                    <strong>Troubleshooting:</strong>
+                    <ul className="mt-1 ml-4 list-disc space-y-1">
+                      <li>If this is a scanned PDF, try using OCR or convert to text first</li>
+                      <li>Check if the PDF is password protected</li>
+                      <li>Ensure the PDF contains selectable text, not just images</li>
+                      <li>Try a different PDF extraction method or manual text input</li>
+                    </ul>
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -455,13 +529,50 @@ export function ExtractedDataPreview({
                       </div>
                       <div className="ml-6 space-y-2">
                         {item.structured_info.facilities.map((facility, facilityIndex) => (
-                          <div key={facilityIndex} className="border-l-2 border-blue-200 pl-3">
-                            <div className="font-medium text-sm">{facility.name}</div>
-                            {facility.type && (
-                              <div className="text-xs text-muted-foreground">Type: {facility.type}</div>
-                            )}
-                            {facility.usage && (
-                              <div className="text-xs text-muted-foreground">Usage: {facility.usage}</div>
+                          <div key={facilityIndex} className="border-l-2 border-blue-200 pl-3 space-y-2">
+                            {editingIndex === index ? (
+                              <>
+                                <Input
+                                  value={facility.name}
+                                  onChange={(e) => {
+                                    const newFacilities = [...item.structured_info!.facilities!]
+                                    newFacilities[facilityIndex] = { ...facility, name: e.target.value }
+                                    updateField(index, 'facilities', newFacilities)
+                                  }}
+                                  placeholder="Facility name"
+                                  className="font-medium text-sm"
+                                />
+                                <Input
+                                  value={facility.type || ''}
+                                  onChange={(e) => {
+                                    const newFacilities = [...item.structured_info!.facilities!]
+                                    newFacilities[facilityIndex] = { ...facility, type: e.target.value }
+                                    updateField(index, 'facilities', newFacilities)
+                                  }}
+                                  placeholder="Facility type"
+                                  className="text-xs"
+                                />
+                                <Textarea
+                                  value={facility.usage || ''}
+                                  onChange={(e) => {
+                                    const newFacilities = [...item.structured_info!.facilities!]
+                                    newFacilities[facilityIndex] = { ...facility, usage: e.target.value }
+                                    updateField(index, 'facilities', newFacilities)
+                                  }}
+                                  placeholder="Facility usage"
+                                  className="text-xs min-h-[60px]"
+                                />
+                              </>
+                            ) : (
+                              <>
+                                <div className="font-medium text-sm">{facility.name}</div>
+                                {facility.type && (
+                                  <div className="text-xs text-muted-foreground">Type: {facility.type}</div>
+                                )}
+                                {facility.usage && (
+                                  <div className="text-xs text-muted-foreground">Usage: {facility.usage}</div>
+                                )}
+                              </>
                             )}
                           </div>
                         ))}
@@ -523,11 +634,11 @@ export function ExtractedDataPreview({
           Cancel
         </Button>
         <Button 
-          onClick={() => onConfirm(editData)} 
-          disabled={validDataCount === 0 || isConfirming}
+          onClick={handleConfirmSelected} 
+          disabled={selectedValidCount === 0 || isConfirming}
           className="min-w-[120px]"
         >
-          {isConfirming ? "Indexing..." : `Confirm & Index (${validDataCount})`}
+          {isConfirming ? "Indexing..." : `Confirm & Index (${selectedValidCount})`}
         </Button>
       </div>
     </div>

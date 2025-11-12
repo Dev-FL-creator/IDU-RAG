@@ -103,7 +103,7 @@ export class BackendAPI {
     
     // 添加配置参数
     formData.append('chat_model', 'deepseek-chat');
-    formData.append('pdf_extraction_method', 'pymupdf');
+    formData.append('pdf_extraction_method', 'azure_docint');
 
     const response = await fetch(`${BACKEND_URL}/api/extract_pdf_preview`, {
       method: 'POST',

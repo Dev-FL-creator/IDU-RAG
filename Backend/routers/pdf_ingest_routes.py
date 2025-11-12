@@ -16,7 +16,6 @@ from openai import OpenAI as OpenAIPlatform, AzureOpenAI
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from embed_and_ingest_chunks import (
     extract_text_from_pymupdf, 
-    extract_text_from_pdf, 
     extract_org_json
 )
 
@@ -681,14 +680,39 @@ async def extract_pdf_preview(
             
             # Extract text from PDF
             text_content = ""
+            print(f"Extracting text from {filename} using method: {pdf_extraction_method}")
+            
             if pdf_extraction_method == "pymupdf":
                 text_content = extract_text_from_pymupdf(pdf_path)
+                print(f"PyMuPDF extracted {len(text_content)} characters from {filename}")
             else:
-                text_content = extract_text_from_pdf(pdf_path, cfg)
+                # Use the comprehensive extract_text_from_pdf function that handles Azure DI
+                # This function returns (full_text, doc_json, blocks)
+                result = extract_text_from_pdf(pdf_path, cfg, pdf_extraction_method, pdf_extraction_fallback)
+                if isinstance(result, tuple):
+                    text_content = result[0]  # Take only the text content
+                else:
+                    text_content = result
+                print(f"extract_text_from_pdf extracted {len(text_content)} characters from {filename}")
             
+            # Apply fallback if needed
             if not text_content or len(text_content.strip()) < 50:
+                print(f"Text too short ({len(text_content)} chars), trying fallback...")
                 if pdf_extraction_fallback:
-                    text_content = extract_text_from_pymupdf(pdf_path)
+                    if pdf_extraction_method == "pymupdf":
+                        # Try Azure Document Intelligence as fallback
+                        print("Trying Azure Document Intelligence as fallback...")
+                        result = extract_text_from_pdf(pdf_path, cfg, "azure_docint", False)
+                        if isinstance(result, tuple):
+                            text_content = result[0]
+                        else:
+                            text_content = result
+                        print(f"Azure DI fallback extracted {len(text_content)} characters")
+                    else:
+                        # Try PyMuPDF as fallback
+                        print("Trying PyMuPDF as fallback...")
+                        text_content = extract_text_from_pymupdf(pdf_path)
+                        print(f"PyMuPDF fallback extracted {len(text_content)} characters")
             
             if text_content and len(text_content.strip()) >= 50:
                 # Use DeepSeek to extract structured information
@@ -705,10 +729,20 @@ async def extract_pdf_preview(
                     "raw_text_preview": text_content[:500] + "..." if len(text_content) > 500 else text_content
                 })
             else:
+                # More detailed error information
+                text_len = len(text_content) if text_content else 0
+                if text_len == 0:
+                    error_msg = "No text could be extracted from PDF. This might be a scanned document or image-only PDF."
+                elif text_len < 50:
+                    error_msg = f"Extracted text too short ({text_len} characters). PDF might be mostly images or have formatting issues."
+                else:
+                    error_msg = "Could not extract sufficient text from PDF"
+                
                 extracted_data.append({
                     "filename": filename,
-                    "error": "Could not extract sufficient text from PDF",
-                    "text_length": len(text_content) if text_content else 0
+                    "error": error_msg,
+                    "text_length": text_len,
+                    "raw_text_preview": text_content[:200] if text_content else "No text extracted"
                 })
     
     except Exception as e:
@@ -786,9 +820,12 @@ async def _process_confirmed_data(job_id: str, extracted_data: List[Dict[str, An
             structured_info = data["structured_info"]
             filename = data["filename"]
             
+            # Clean filename for Azure Search ID (only letters, digits, underscore, dash, equal sign allowed)
+            clean_filename = re.sub(r'[^a-zA-Z0-9_\-=]', '_', filename)
+            
             # Create chunks from the structured info
             chunk = {
-                "id": f"{filename}_{i}",
+                "id": f"{clean_filename}_{i}",
                 "content": structured_info.get("summary", ""),
                 "org_name": structured_info.get("org_name", ""),
                 "country": structured_info.get("country", ""),
@@ -809,18 +846,54 @@ async def _process_confirmed_data(job_id: str, extracted_data: List[Dict[str, An
         # Index to Azure Search
         _set_progress(job_id, message="Indexing to Azure Search...")
         
-        # Use the existing indexing logic
-        from .create_index_routes import _ensure_index_exists, _upload_chunks_to_search
-        
-        index_name = options.index_name or cfg.get("search_index_name", "idu-rag-index")
+        # Direct indexing using Azure Search client
+        index_name = options.index_name or cfg.get("index_name", "pdf-knowledge-base-access-all")
         embedding_model = options.embedding_model or cfg.get("embedding_model", "text-embedding-3-small")
         embedding_dimensions = options.embedding_dimensions
         
-        # Ensure index exists
-        _ensure_index_exists(cfg, index_name, embedding_dimensions)
+        # Create Azure OpenAI client for embeddings
+        azure_openai = AzureOpenAI(
+            api_key=cfg["openai_api_key"],
+            api_version=cfg["openai_api_version"],
+            azure_endpoint=cfg["openai_endpoint"]
+        )
         
-        # Upload chunks
-        _upload_chunks_to_search(cfg, all_chunks, index_name, embedding_model, embedding_dimensions)
+        # Create Search client
+        search_client = SearchClient(
+            endpoint=f"https://{cfg['search_service_name']}.search.windows.net",
+            index_name=index_name,
+            credential=AzureKeyCredential(cfg["search_api_key"])
+        )
+        
+        # Generate embeddings and upload
+        docs_for_upload = []
+        for chunk in all_chunks:
+            # Generate embedding for the content
+            content_for_embedding = f"{chunk.get('org_name', '')} {chunk.get('content', '')}"
+            if content_for_embedding.strip():
+                embedding_response = azure_openai.embeddings.create(
+                    input=content_for_embedding,
+                    model=embedding_model
+                )
+                embedding = embedding_response.data[0].embedding
+                
+                doc = {
+                    "id": chunk["id"],
+                    "content": chunk.get("content", ""),
+                    "org_name": chunk.get("org_name", ""),
+                    "country": chunk.get("country", ""),
+                    "industry": chunk.get("industry", ""),
+                    "capabilities": chunk.get("capabilities", []),
+                    "projects": chunk.get("projects", []),
+                    "filepath": chunk.get("filepath", ""),
+                    "chunk_index": chunk.get("chunk_index", 0),
+                    "content_vector": embedding
+                }
+                docs_for_upload.append(doc)
+        
+        # Upload documents to Azure Search
+        if docs_for_upload:
+            search_client.merge_or_upload_documents(docs_for_upload)
         
         _set_progress(job_id, status="completed", current=len(all_chunks), message=f"Successfully indexed {len(all_chunks)} items")
         
