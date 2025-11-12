@@ -56,9 +56,23 @@ python Backend/embed_and_ingest_chunks.py --folder "C:\Users\jinkliu\Desktop\Jin
 ```
 
 ### 第3步：执行查询
+“We are looking for partners with experience in microstructure or material simulation projects similar to ours. What collaborations or capabilities does this company offer?”
 
+“Our team is interested in joint R&D on microstructure modeling and material forming — are there any similar projects mentioned in your database?”
+
+“Which organizations have expertise in structure or process simulation that could be potential collaboration partners?”
+
+“We would like to collaborate on metal forming or structure simulation projects. Which company profiles in your index mention such capabilities?”
+
+
+kvec:向量搜索的top k
+kbm25:BM25的top k
+alpha:语义贡献比重
 ```bash
-python query_routes.py "你的查询文本" [配置文件路径] [结果数量]
+python Backend/hybrid_query.py `
+"Which organizations have expertise in structure or process simulation that could be potential collaboration partners?" `
+"C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\Backend\config.json" `
+--kvec 10 --kbm25 10 --alpha 0.7
 ```
 
 参数说明：
