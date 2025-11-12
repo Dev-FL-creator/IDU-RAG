@@ -18,12 +18,13 @@ interface UploadedFile {
   status: 'pending' | 'extracting' | 'success' | 'error'
   error?: string
   textLength?: number
+  file: File  // 保存实际的File对象
 }
 
 export function PDFUpload({ onUploadComplete, disabled }: PDFUploadProps) {
   const [files, setFiles] = useState<UploadedFile[]>([])
 
-  const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null)
+
   const [extractedData, setExtractedData] = useState<ExtractedData[] | null>(null)
   const [isExtracting, setIsExtracting] = useState(false)
   const [isConfirming, setIsConfirming] = useState(false)
@@ -34,15 +35,19 @@ export function PDFUpload({ onUploadComplete, disabled }: PDFUploadProps) {
     for (let i = 0; i < fileList.length; i++) {
       const file = fileList[i]
       if (file.type === 'application/pdf') {
-        newFiles.push({
-          name: file.name,
-          size: file.size,
-          status: 'pending'
-        })
+        // 检查是否已经存在同名文件
+        const existingFile = files.find(f => f.name === file.name)
+        if (!existingFile) {
+          newFiles.push({
+            name: file.name,
+            size: file.size,
+            status: 'pending',
+            file: file
+          })
+        }
       }
     }
     setFiles(prev => [...prev, ...newFiles])
-    setSelectedFiles(fileList)
   }
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -68,15 +73,17 @@ export function PDFUpload({ onUploadComplete, disabled }: PDFUploadProps) {
   }
 
   const handleExtractPreview = async () => {
-    if (files.length === 0 || isExtracting || !selectedFiles) return
+    const pendingFiles = files.filter(f => f.status === 'pending')
+    if (pendingFiles.length === 0 || isExtracting) return
 
     setIsExtracting(true)
     const allExtractedData: any[] = []
     
     try {
-      // 逐个处理文件
-      for (let i = 0; i < selectedFiles.length; i++) {
-        const file = selectedFiles[i]
+      // 逐个处理所有pending状态的文件
+      for (let i = 0; i < pendingFiles.length; i++) {
+        const uploadedFile = pendingFiles[i]
+        const file = uploadedFile.file
         const fileName = file.name
         
         // 更新当前文件状态为extracting
@@ -135,7 +142,7 @@ export function PDFUpload({ onUploadComplete, disabled }: PDFUploadProps) {
         }
         
         // 添加小延迟，让用户看到进度
-        if (i < selectedFiles.length - 1) {
+        if (i < pendingFiles.length - 1) {
           await new Promise(resolve => setTimeout(resolve, 100))
         }
       }
@@ -169,7 +176,6 @@ export function PDFUpload({ onUploadComplete, disabled }: PDFUploadProps) {
       
       // 重置状态
       setFiles([])
-      setSelectedFiles(null)
       setExtractedData(null)
       if (fileInputRef.current) {
         fileInputRef.current.value = ''
@@ -185,7 +191,6 @@ export function PDFUpload({ onUploadComplete, disabled }: PDFUploadProps) {
   const handleCancelPreview = () => {
     setExtractedData(null)
     setFiles([])
-    setSelectedFiles(null)
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
