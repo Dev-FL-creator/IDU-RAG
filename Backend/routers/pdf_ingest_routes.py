@@ -16,7 +16,10 @@ from openai import OpenAI as OpenAIPlatform, AzureOpenAI
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from embed_and_ingest_chunks import (
     extract_text_from_pymupdf, 
-    extract_org_json
+    extract_org_json,
+    flatten_for_index,
+    chunk_text,
+    batch_embeddings
 )
 
 # ---------------------------------------------------------
@@ -726,7 +729,8 @@ async def extract_pdf_preview(
                     "filename": filename,
                     "text_length": len(text_content),
                     "structured_info": structured_info,
-                    "raw_text_preview": text_content[:500] + "..." if len(text_content) > 500 else text_content
+                    "raw_text_preview": text_content[:500] + "..." if len(text_content) > 500 else text_content,
+                    "raw_text": text_content  # Store full text for chunking later
                 })
             else:
                 # More detailed error information
@@ -811,48 +815,66 @@ async def _process_confirmed_data(job_id: str, extracted_data: List[Dict[str, An
     try:
         _set_progress(job_id, status="processing", message="Preparing to index confirmed data")
         
-        # Prepare chunks for indexing
-        all_chunks = []
+        # Process each PDF and create chunks
+        all_docs = []
         for i, data in enumerate(extracted_data):
             if "structured_info" not in data or "error" in data:
                 continue
                 
             structured_info = data["structured_info"]
             filename = data["filename"]
+            raw_text = data.get("raw_text", "")  # Get the full extracted text
             
-            # Clean filename for Azure Search ID (only letters, digits, underscore, dash, equal sign allowed)
-            clean_filename = re.sub(r'[^a-zA-Z0-9_\-=]', '_', filename)
+            # Generate a unique source_id for this PDF
+            source_id = str(uuid.uuid4())
             
-            # Create chunks from the structured info
-            chunk = {
-                "id": f"{clean_filename}_{i}",
-                "content": structured_info.get("summary", ""),
-                "org_name": structured_info.get("org_name", ""),
-                "country": structured_info.get("country", ""),
-                "industry": structured_info.get("industry", ""),
-                "capabilities": structured_info.get("capabilities", []),
-                "projects": structured_info.get("projects", []),
-                "filepath": filename,
-                "chunk_index": 0
-            }
-            all_chunks.append(chunk)
+            # Clean filename for file path
+            clean_filename = re.sub(r'[^a-zA-Z0-9_\-=.]', '_', filename)
             
-            _set_progress(job_id, current=i+1, message=f"Processed {filename}")
+            # Flatten organization info for indexing (following embed_and_ingest_chunks.py pattern)
+            flat_org = flatten_for_index(structured_info)
+            
+            # Chunk the full text (following embed_and_ingest_chunks.py logic)
+            text_len = len(raw_text)
+            if text_len <= 3000:
+                chunk_size = max(500, text_len // 3)
+                overlap = min(100, chunk_size // 10)
+            else:
+                chunk_size = 5000
+                overlap = 200
+            
+            chunks = chunk_text(raw_text, max_chunk_size=chunk_size, overlap=overlap)
+            
+            # Create document for each chunk
+            for chunk_idx, chunk_content in enumerate(chunks):
+                doc_id = f"{source_id}-{chunk_idx}"
+                doc = {
+                    "id": doc_id,
+                    "source_id": source_id,
+                    "chunk_index": chunk_idx,
+                    "content": chunk_content,
+                    "filepath": clean_filename,
+                    **flat_org  # Include all flattened organization fields
+                }
+                all_docs.append(doc)
+            
+            _set_progress(job_id, current=i+1, message=f"Processed {filename}: {len(chunks)} chunks")
         
-        if not all_chunks:
+        if not all_docs:
             _set_progress(job_id, status="completed", message="No valid data to index")
             return
         
         # Index to Azure Search
         _set_progress(job_id, message="Indexing to Azure Search...")
         
-        # Direct indexing using Azure Search client
+        # Setup clients and parameters
         index_name = options.index_name or cfg.get("index_name", "pdf-knowledge-base-access-all")
         embedding_model = options.embedding_model or cfg.get("embedding_model", "text-embedding-3-small")
-        embedding_dimensions = options.embedding_dimensions
+        embedding_dimensions = options.embedding_dimensions or cfg.get("embedding_dimensions", 1536)
+        batch_size = options.batch_upload_size or 64
         
         # Create Azure OpenAI client for embeddings
-        azure_openai = AzureOpenAI(
+        azure_embed_client = AzureOpenAI(
             api_key=cfg["openai_api_key"],
             api_version=cfg["openai_api_version"],
             azure_endpoint=cfg["openai_endpoint"]
@@ -865,37 +887,32 @@ async def _process_confirmed_data(job_id: str, extracted_data: List[Dict[str, An
             credential=AzureKeyCredential(cfg["search_api_key"])
         )
         
-        # Generate embeddings and upload
-        docs_for_upload = []
-        for chunk in all_chunks:
-            # Generate embedding for the content
-            content_for_embedding = f"{chunk.get('org_name', '')} {chunk.get('content', '')}"
-            if content_for_embedding.strip():
-                embedding_response = azure_openai.embeddings.create(
-                    input=content_for_embedding,
-                    model=embedding_model
-                )
-                embedding = embedding_response.data[0].embedding
-                
-                doc = {
-                    "id": chunk["id"],
-                    "content": chunk.get("content", ""),
-                    "org_name": chunk.get("org_name", ""),
-                    "country": chunk.get("country", ""),
-                    "industry": chunk.get("industry", ""),
-                    "capabilities": chunk.get("capabilities", []),
-                    "projects": chunk.get("projects", []),
-                    "filepath": chunk.get("filepath", ""),
-                    "chunk_index": chunk.get("chunk_index", 0),
-                    "content_vector": embedding
-                }
-                docs_for_upload.append(doc)
+        # Generate embeddings in batches and upload (following embed_and_ingest_chunks.py pattern)
+        docs_batch = []
+        for i in range(0, len(all_docs), 16):  # Process 16 docs at a time for embedding
+            sub_docs = all_docs[i:i+16]
+            texts = [doc["content"] for doc in sub_docs]
+            
+            # Generate embeddings for this batch
+            embeddings = batch_embeddings(azure_embed_client, embedding_model, texts, embedding_dimensions)
+            
+            # Add embeddings to documents
+            for doc, embedding in zip(sub_docs, embeddings):
+                doc["content_vector"] = embedding
+                docs_batch.append(doc)
+            
+            # Upload when batch is full
+            if len(docs_batch) >= batch_size:
+                search_client.merge_or_upload_documents(docs_batch)
+                _set_progress(job_id, message=f"Uploaded {len(docs_batch)} documents")
+                docs_batch = []
         
-        # Upload documents to Azure Search
-        if docs_for_upload:
-            search_client.merge_or_upload_documents(docs_for_upload)
+        # Upload remaining documents
+        if docs_batch:
+            search_client.merge_or_upload_documents(docs_batch)
+            _set_progress(job_id, message=f"Uploaded final {len(docs_batch)} documents")
         
-        _set_progress(job_id, status="completed", current=len(all_chunks), message=f"Successfully indexed {len(all_chunks)} items")
+        _set_progress(job_id, status="completed", current=len(all_docs), message=f"Successfully indexed {len(all_docs)} items")
         
     except Exception as e:
         _set_progress(job_id, status="error", message=f"Error: {str(e)}")

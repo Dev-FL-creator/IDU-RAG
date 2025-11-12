@@ -15,13 +15,14 @@ interface PDFUploadProps {
 interface UploadedFile {
   name: string
   size: number
-  status: 'pending' | 'uploading' | 'success' | 'error'
+  status: 'pending' | 'extracting' | 'success' | 'error'
   error?: string
+  textLength?: number
 }
 
 export function PDFUpload({ onUploadComplete, disabled }: PDFUploadProps) {
   const [files, setFiles] = useState<UploadedFile[]>([])
-  const [isUploading, setIsUploading] = useState(false)
+
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null)
   const [extractedData, setExtractedData] = useState<ExtractedData[] | null>(null)
   const [isExtracting, setIsExtracting] = useState(false)
@@ -70,25 +71,90 @@ export function PDFUpload({ onUploadComplete, disabled }: PDFUploadProps) {
     if (files.length === 0 || isExtracting || !selectedFiles) return
 
     setIsExtracting(true)
+    const allExtractedData: any[] = []
     
     try {
-      // 更新所有文件状态为uploading (extracting)
-      setFiles(prev => prev.map(f => ({ ...f, status: 'uploading' as const })))
+      // 逐个处理文件
+      for (let i = 0; i < selectedFiles.length; i++) {
+        const file = selectedFiles[i]
+        const fileName = file.name
+        
+        // 更新当前文件状态为extracting
+        setFiles(prev => prev.map(f => 
+          f.name === fileName 
+            ? { ...f, status: 'extracting' as const }
+            : f
+        ))
 
-      const response = await BackendAPI.extractPDFPreview(selectedFiles)
+        try {
+          // 创建只包含当前文件的FileList
+          const singleFileList = new DataTransfer()
+          singleFileList.items.add(file)
+          
+          const response = await BackendAPI.extractPDFPreview(singleFileList.files)
+          
+          if (response.extracted_data && response.extracted_data.length > 0) {
+            const extractResult = response.extracted_data[0]
+            allExtractedData.push(extractResult)
+            
+            if (extractResult.error) {
+              // 更新文件状态为error
+              setFiles(prev => prev.map(f => 
+                f.name === fileName 
+                  ? { ...f, status: 'error' as const, error: extractResult.error }
+                  : f
+              ))
+            } else {
+              // 更新文件状态为success
+              setFiles(prev => prev.map(f => 
+                f.name === fileName 
+                  ? { ...f, status: 'success' as const, textLength: extractResult.text_length }
+                  : f
+              ))
+            }
+          } else {
+            // 没有返回数据
+            setFiles(prev => prev.map(f => 
+              f.name === fileName 
+                ? { ...f, status: 'error' as const, error: 'No data returned' }
+                : f
+            ))
+          }
+          
+        } catch (fileError) {
+          console.error(`Extraction failed for ${fileName}:`, fileError)
+          setFiles(prev => prev.map(f => 
+            f.name === fileName 
+              ? { 
+                  ...f, 
+                  status: 'error' as const,
+                  error: fileError instanceof Error ? fileError.message : 'Extraction failed'
+                }
+              : f
+          ))
+        }
+        
+        // 添加小延迟，让用户看到进度
+        if (i < selectedFiles.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 100))
+        }
+      }
       
-      // 更新所有文件状态为success
-      setFiles(prev => prev.map(f => ({ ...f, status: 'success' as const })))
-      
-      setExtractedData(response.extracted_data)
+      // 设置所有成功提取的数据
+      setExtractedData(allExtractedData.filter(data => !data.error))
       
     } catch (error) {
-      console.error('Extraction failed:', error)
-      setFiles(prev => prev.map(f => ({ 
-        ...f, 
-        status: 'error' as const,
-        error: error instanceof Error ? error.message : 'Extraction failed'
-      })))
+      console.error('Extraction process failed:', error)
+      // 如果整个过程失败，将剩余pending状态的文件标记为error
+      setFiles(prev => prev.map(f => 
+        f.status === 'extracting' || f.status === 'pending'
+          ? { 
+              ...f, 
+              status: 'error' as const,
+              error: error instanceof Error ? error.message : 'Extraction process failed'
+            }
+          : f
+      ))
     } finally {
       setIsExtracting(false)
     }
@@ -144,7 +210,7 @@ export function PDFUpload({ onUploadComplete, disabled }: PDFUploadProps) {
           className="border-2 border-dashed border-muted-foreground/25 rounded-lg p-6 text-center hover:border-muted-foreground/50 transition-colors relative cursor-pointer"
           onDragOver={handleDragOver}
           onDrop={handleDrop}
-          onClick={() => !disabled && !isUploading && fileInputRef.current?.click()}
+          onClick={() => !disabled && !isExtracting && fileInputRef.current?.click()}
         >
           <div className="flex flex-col items-center gap-2 pointer-events-none">
             <Upload className="h-8 w-8 text-muted-foreground" />
@@ -163,7 +229,7 @@ export function PDFUpload({ onUploadComplete, disabled }: PDFUploadProps) {
             accept=".pdf"
             className="hidden"
             onChange={(e) => e.target.files && handleFileSelect(e.target.files)}
-            disabled={disabled || isUploading}
+            disabled={disabled || isExtracting}
           />
         </div>
 
@@ -181,19 +247,43 @@ export function PDFUpload({ onUploadComplete, disabled }: PDFUploadProps) {
                   <div className="text-sm font-medium truncate">{file.name}</div>
                   <div className="text-xs text-muted-foreground">
                     {formatFileSize(file.size)}
+                    {file.textLength && ` • ${file.textLength} characters extracted`}
+                    {file.status === 'extracting' && ' • Extracting...'}
+                    {file.error && ` • Error: ${file.error}`}
                   </div>
                 </div>
                 
                 {/* Status indicator */}
                 <div className="flex items-center gap-2">
-                  {file.status === 'uploading' && (
-                    <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                  {file.status === 'extracting' && (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                      <span className="text-xs text-blue-600">Extracting</span>
+                    </>
                   )}
                   {file.status === 'success' && (
-                    <div className="w-2 h-2 bg-green-500 rounded-full" />
+                    <>
+                      <div className="w-2 h-2 bg-green-500 rounded-full" />
+                      <span className="text-xs text-green-600">Ready</span>
+                    </>
                   )}
                   {file.status === 'error' && (
-                    <div className="w-2 h-2 bg-red-500 rounded-full" />
+                    <>
+                      <div className="w-2 h-2 bg-red-500 rounded-full" />
+                      <span className="text-xs text-red-600">Failed</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setFiles(prev => prev.map(f => 
+                          f.name === file.name ? { ...f, status: 'pending' as const, error: undefined } : f
+                        ))}
+                        className="h-6 w-6 p-0 ml-1"
+                        disabled={isExtracting}
+                        title="Retry extraction"
+                      >
+                        <Upload className="h-3 w-3" />
+                      </Button>
+                    </>
                   )}
                   
                   {file.status === 'pending' && (
@@ -202,7 +292,7 @@ export function PDFUpload({ onUploadComplete, disabled }: PDFUploadProps) {
                       size="sm"
                       onClick={() => removeFile(index)}
                       className="h-6 w-6 p-0"
-                      disabled={isUploading}
+                      disabled={isExtracting}
                     >
                       <X className="h-3 w-3" />
                     </Button>
@@ -210,6 +300,26 @@ export function PDFUpload({ onUploadComplete, disabled }: PDFUploadProps) {
                 </div>
               </div>
             ))}
+            
+            {/* File status summary */}
+            {files.length > 0 && (
+              <div className="flex items-center justify-between mt-4 text-xs text-muted-foreground">
+                <div>
+                  {files.length} files • 
+                  {files.filter(f => f.status === 'success').length} ready • 
+                  {files.filter(f => f.status === 'extracting').length} extracting • 
+                  {files.filter(f => f.status === 'error').length} failed
+                </div>
+                {isExtracting && (
+                  <div className="text-blue-600">
+                    Processing {files.filter(f => f.status === 'extracting').length > 0 ? 
+                      files.findIndex(f => f.status === 'extracting') + 1 : 
+                      files.filter(f => f.status !== 'pending').length + 1
+                    } of {files.length}
+                  </div>
+                )}
+              </div>
+            )}
             
             {/* Extract Preview button */}
             <div className="flex justify-end mt-4">
