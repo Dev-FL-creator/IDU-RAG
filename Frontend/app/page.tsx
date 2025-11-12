@@ -119,24 +119,24 @@ export default function Home() {
         const companies: Company[] = []
 
         if (searchResponse.results.length > 0) {
-          resultTexts.push(`我找到了 ${searchResponse.results.length} 个相关的结果：\n`)
+          resultTexts.push(`Found ${searchResponse.results.length} relevant results:\n`)
           
           searchResponse.results.forEach((result: SearchResult, index: number) => {
             const score = (result.combined_score * 100).toFixed(1)
-            let resultText = `${index + 1}. **${result.org_name || '组织'}**`
+            let resultText = `${index + 1}. **${result.org_name || 'Organization'}**`
             
             if (result.country) resultText += ` (${result.country})`
             if (result.industry) resultText += ` - ${result.industry}`
             
-            resultText += `\n   评分: ${score}%`
+            resultText += `\n   Score: ${score}%`
             
             if (result.capabilities && result.capabilities.length > 0) {
-              resultText += `\n   能力: ${result.capabilities.slice(0, 3).join(', ')}`
+              resultText += `\n   Capabilities: ${result.capabilities.slice(0, 3).join(', ')}`
             }
             
             if (result.content) {
               const preview = result.content.substring(0, 200)
-              resultText += `\n   内容: ${preview}${result.content.length > 200 ? '...' : ''}`
+              resultText += `\n   Content: ${preview}${result.content.length > 200 ? '...' : ''}`
             }
             
             resultText += '\n'
@@ -148,7 +148,7 @@ export default function Home() {
                 id: result.id,
                 name: result.org_name,
                 icon: "/images/avatars/company-default.png",
-                shortDescription: result.industry || "研究组织",
+                shortDescription: result.industry || "Research Organization",
                 fullDescription: result.content || "",
                 industry: result.industry || "",
                 founded: "",
@@ -157,7 +157,7 @@ export default function Home() {
                 images: [],
                 metrics: [
                   {
-                    label: "相关度",
+                    label: "Relevance",
                     value: `${score}%`,
                     trend: "neutral" as const
                   }
@@ -167,7 +167,7 @@ export default function Home() {
             }
           })
         } else {
-          resultTexts.push("抱歉，没有找到相关的结果。请尝试使用不同的关键词。")
+          resultTexts.push("Sorry, no relevant results found. Please try using different keywords.")
         }
 
         const aiMessage: Message = {
@@ -188,28 +188,28 @@ export default function Home() {
         }
         setMessages((prev) => [...prev, aiMessage])
       } else {
-        // Backend未连接时的模拟响应
+        // Mock response when backend is not connected
         const aiMessage: Message = {
           id: (Date.now() + 1).toString(),
           role: "assistant",
           contents: [
             {
               type: "text",
-              content: "⚠️ Backend服务未连接。请确保Backend服务器运行在 http://localhost:8000\n\n这是一个模拟响应。要获取真实的搜索结果，请启动Backend服务。",
+              content: "⚠️ Backend service not connected. Please ensure the backend server is running on http://localhost:8001\n\nThis is a mock response. To get real search results, please start the backend service.",
             },
           ],
         }
         setMessages((prev) => [...prev, aiMessage])
       }
     } catch (error) {
-      console.error('搜索失败:', error)
+      console.error('Search failed:', error)
       const errorMessage: Message = {
         id: (Date.now() + 2).toString(),
         role: "assistant",
         contents: [
           {
             type: "text",
-            content: `❌ 搜索失败: ${error instanceof Error ? error.message : '未知错误'}`,
+            content: `❌ Search failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
           },
         ],
       }
@@ -343,14 +343,14 @@ export default function Home() {
                         ) : (
                           <WifiOff className="h-3 w-3" />
                         )}
-                        {backendStatus === 'connected' ? 'Backend已连接' : 
-                         backendStatus === 'disconnected' ? 'Backend未连接' : '检查中...'}
+                        {backendStatus === 'connected' ? 'Backend Connected' : 
+                         backendStatus === 'disconnected' ? 'Backend Disconnected' : 'Checking...'}
                       </div>
                     </TooltipTrigger>
                     <TooltipContent>
                       {backendStatus === 'connected' 
-                        ? '后端服务运行正常，可以进行实时搜索' 
-                        : '后端服务未连接，将使用模拟数据'}
+                        ? 'Backend service is running normally, real-time search available' 
+                        : 'Backend service not connected, using mock data'}
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
