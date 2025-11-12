@@ -2,6 +2,9 @@
 Test Data/
 "Test Data"/
 
+# Node.js
+node-v24.8.0-win-x64/
+
 # Python
 __pycache__/
 *.py[cod]
