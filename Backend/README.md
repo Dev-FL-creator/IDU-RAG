@@ -37,7 +37,7 @@ Backend\azure_openai_env\Scripts\activate
 
 ```bash
 python create_index.py [配置文件路径]
-python Backend/create_index.py "C:\Users\Administrator\Desktop\IDU-RAG\Backend\config.json"
+python Backend/create_index.py "C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\Backend\config.json"
 ```
 
 如果不提供配置文件路径，将默认使用当前目录下的 `config.json`。
@@ -52,7 +52,7 @@ python Backend/embed_and_ingest_chunks.py "C:\Users\jinkliu\Desktop\Jinkai Docs\
 
 批量处理文档下所有pdf文件：
 ```bash
-python Backend/embed_and_ingest_chunks.py --folder "C:\Users\Administrator\Desktop\IDU-RAG\Test Data\Institute VB\ACC Equipments" "C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\config.json" 
+python Backend/embed_and_ingest_chunks.py --folder "C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\Test Data\Institute VB\ACC Equipments" "C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\Backend\config.json" 
 ```
 
 ### 第3步：执行查询
