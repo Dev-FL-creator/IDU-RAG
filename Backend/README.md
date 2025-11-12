@@ -47,7 +47,7 @@ python Backend/create_index.py "C:\Users\Administrator\Desktop\IDU-RAG\Backend\c
 处理单个PDF文件：
 
 ```bash
-python Backend/embed_and_ingest_chunks.py "C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\test_pdf.pdf" "C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\config.json"
+python Backend/embed_and_ingest_chunks.py "C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\test_pdf.pdf" "C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\Backend\config.json"
 ```
 
 批量处理文档下所有pdf文件：
