@@ -1,5 +1,12 @@
 # Azure OpenAI 和 AI Search PDF 处理系统 - 模块化版本
-
+启动backend
+```bash
+ cd "C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\Backend"; .\azure_openai_env\Scripts\Activate.ps1; python main.py
+```
+启动Frontend
+```bash
+ cd Frontend; $env:PATH += ";C:\Users\jinkliu\Desktop\Jinkai Docs\IDU-RAG\node-v24.8.0-win-x64"; npm.cmd run dev
+ ```
 这个项目将Azure OpenAI和AI Search的功能分解成三个独立的模块：
 1. **创建索引** - 使用`create_index_routes.py`
 2. **处理PDF和上传嵌入** - 使用`upload_embedding_routes.py`

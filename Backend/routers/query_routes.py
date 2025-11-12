@@ -1,170 +1,348 @@
-import os
-import json
-import sys
-from typing import List, Dict, Any
+# routers/search_hybrid.py
+import os, json, math
+from typing import List, Dict, Any, Optional
+
+import requests
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field, conint, confloat
+
 from azure.core.credentials import AzureKeyCredential
-from azure.search.documents import SearchClient
 from openai import AzureOpenAI
 
+# =========================================
+# Router
+# =========================================
+router = APIRouter(prefix="/api/search", tags=["hybrid-search"])
 
-def generate_embedding(text: str, openai_client: AzureOpenAI, deployment: str) -> List[float]:
-    """Create query embedding with Azure OpenAI (deployment name)."""
-    resp = openai_client.embeddings.create(
-        input=text,
-        model=deployment
-    )
-    return resp.data[0].embedding
+# =========================================
+# Config loader
+# =========================================
+def load_config() -> dict:
+    cfg_path = os.getenv("CONFIG_PATH") or os.path.join(os.path.dirname(__file__), "..", "config.json")
+    cfg_path = os.path.abspath(cfg_path)
+    with open(cfg_path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
-
-def query_with_vector_search(query_text: str, config_path: str, top_k: int = 3) -> Dict[str, Any]:
-    """Vector search over a single index where each document stores chunk text, vector, and structured fields."""
-    # Load config
-    with open(config_path, "r", encoding="utf-8") as f:
-        cfg = json.load(f)
-
-    # Azure OpenAI client
-    openai_client = AzureOpenAI(
+# =========================================
+# Embedding client & helpers
+# =========================================
+def build_azure_embed_client(cfg: dict) -> AzureOpenAI:
+    return AzureOpenAI(
         api_key=cfg["openai_api_key"],
         api_version=cfg["openai_api_version"],
         azure_endpoint=cfg["openai_endpoint"],
     )
 
-    # Azure AI Search client
-    search_client = SearchClient(
-        endpoint=f"https://{cfg['search_service_name']}.search.windows.net",
-        index_name=cfg["index_name"],
-        credential=AzureKeyCredential(cfg["search_api_key"]),
-    )
+def embed_query(azure_embed_client: AzureOpenAI, model: str, text: str, target_dim: int) -> List[float]:
+    if not text or not str(text).strip():
+        return [0.0] * target_dim
+    resp = azure_embed_client.embeddings.create(model=model, input=[text])
+    vec = resp.data[0].embedding
+    if len(vec) < target_dim:
+        vec = vec + [0.0] * (target_dim - len(vec))
+    elif len(vec) > target_dim:
+        vec = vec[:target_dim]
+    return vec
 
-    # Build query embedding
-    print(f"为查询文本生成嵌入向量: {query_text}")
-    query_embedding = generate_embedding(query_text, openai_client, cfg["embedding_model"])
+# =========================================
+# REST params for Azure AI Search
+# =========================================
+def _rest_search_url(cfg: dict, index_name: Optional[str] = None) -> str:
+    service = cfg["search_service_name"]
+    api_version = cfg["search_api_version"]
+    index = index_name or cfg["index_name"]
+    return f"https://{service}.search.windows.net/indexes('{index}')/docs/search?api-version={api_version}"
 
-    # Vector search — IMPORTANT: key must be 'value' for SDK 11.6.0
-    print(f"执行向量搜索，获取前 {top_k} 个结果...")
-    results = search_client.search(
-        search_text=None,
-        vector={"value": query_embedding, "fields": "content_vector", "k": top_k},
-        # 把你关心的结构化字段一并取回
-        select=[
-            "id", "content", "filepath",
-            "org_name", "country", "address", "founded_year", "size", "industry", "is_DU_member", "website",
-            "members_name", "members_title", "members_role",
-            "facilities_name", "facilities_type", "facilities_usage",
-            "capabilities", "projects", "awards", "services",
-            "contacts_name", "contacts_email", "contacts_phone",
-            "addresses", "notes", "chunk_index", "source_id"
+def _rest_headers(cfg: dict) -> Dict[str, str]:
+    return {"Content-Type": "application/json", "api-key": cfg["search_api_key"]}
+
+# =========================================
+# Field selection (align with flatten_for_index)
+# =========================================
+STRUCT_FIELDS = [
+    "org_name", "country", "address", "founded_year", "size", "industry", "is_DU_member", "website",
+    "members_name", "members_title", "members_role",
+    "facilities_name", "facilities_type", "facilities_usage",
+    "capabilities", "projects", "awards", "services",
+    "contacts_name", "contacts_email", "contacts_phone",
+    "addresses", "notes", "page_from", "page_to",
+]
+BASE_FIELDS = ["id", "chunk_index", "content", "filepath"]
+SELECT_FIELDS = BASE_FIELDS + STRUCT_FIELDS
+
+# =========================================
+# Vector-only & BM25-only via REST
+# =========================================
+def vector_topk_rest(cfg: dict, qvec: List[float], k: int, select_fields: List[str], index_name: Optional[str] = None) -> List[Dict[str, Any]]:
+    url = _rest_search_url(cfg, index_name=index_name)
+    headers = _rest_headers(cfg)
+    body = {
+        "select": ",".join(select_fields),
+        "top": k,
+        "search": None,
+        "vectorQueries": [
+            {"kind": "vector", "vector": qvec, "k": k, "fields": "content_vector"}
         ],
-        top=top_k,
-    )
-
-    docs = list(results)
-    if not docs:
-        print("没有找到相关文档")
-        return {"answer": "抱歉，没有找到与您的查询相关的信息。", "sources": []}
-
-    # Assemble context: 每条命中包含结构化摘要 + 原文片段
-    def fmt_list(v):
-        if v is None: return ""
-        if isinstance(v, list): return ", ".join(map(str, v))
-        return str(v)
-
-    context_parts = []
-    for i, d in enumerate(docs, start=1):
-        header = []
-        if d.get("org_name"): header.append(f"Org: {d['org_name']}")
-        if d.get("industry"): header.append(f"Industry: {d['industry']}")
-        if d.get("capabilities"): header.append(f"Capabilities: {fmt_list(d['capabilities'])}")
-        if d.get("contacts_email"): header.append(f"Emails: {fmt_list(d['contacts_email'])}")
-        if d.get("website"): header.append(f"Website: {d['website']}")
-        header_line = " | ".join(header) if header else "Org: (unknown)"
-
-        ctx = (
-            f"[DOC {i}] id={d['id']} | source_id={d.get('source_id')} | chunk_index={d.get('chunk_index')}\n"
-            f"{header_line}\n"
-            f"Content:\n{d.get('content','')}\n"
-        )
-        context_parts.append(ctx)
-
-    context = "\n\n".join(context_parts)
-
-    # Ask LLM to answer strictly based on provided context
-    print("使用OpenAI生成回答...")
-    chat_deployment = cfg["chat_model"]
-    completion = openai_client.chat.completions.create(
-        model=chat_deployment,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a grounded QA assistant. Answer ONLY using the provided context. "
-                    "If the context is insufficient, say you don't know. "
-                    "When possible, cite which [DOC i] your answer is based on."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Context:\n{context}\n\n"
-                    f"Question: {query_text}\n"
-                    f"Instructions: Answer in Chinese. If useful, reference sources like [DOC 1], [DOC 2]."
-                ),
-            },
-        ],
-        temperature=0.2,
-        max_tokens=800,
-    )
-    answer = completion.choices[0].message.content
-
-    # Build sources list
-    sources = []
-    for d in docs:
-        sources.append({
-            "id": d["id"],
-            "filepath": d.get("filepath"),
-            "org_name": d.get("org_name"),
-            "industry": d.get("industry"),
-            "capabilities": d.get("capabilities"),
-            "chunk_index": d.get("chunk_index"),
-            "source_id": d.get("source_id"),
+    }
+    r = requests.post(url, headers=headers, data=json.dumps(body, allow_nan=False))
+    if r.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Vector search failed: {r.status_code} {r.text}")
+    data = r.json()
+    out = []
+    for it in data.get("value", []):
+        out.append({
+            "id": it.get("id"),
+            "score": it.get("@search.score", None),
+            "doc": {f: it.get(f, None) for f in select_fields},
         })
+    return out
 
-    return {"answer": answer, "sources": sources}
+def bm25_topk_rest(cfg: dict, query_text: str, k: int, select_fields: List[str], index_name: Optional[str] = None) -> List[Dict[str, Any]]:
+    url = _rest_search_url(cfg, index_name=index_name)
+    headers = _rest_headers(cfg)
+    body = {
+        "select": ",".join(select_fields),
+        "top": k,
+        "search": query_text,
+        # 如需 semantic，可在标准层启用：
+        # "queryType": "semantic",
+        # "semanticConfiguration": "semantic-config",
+    }
+    r = requests.post(url, headers=headers, data=json.dumps(body, allow_nan=False))
+    if r.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"BM25 search failed: {r.status_code} {r.text}")
+    data = r.json()
+    out = []
+    for it in data.get("value", []):
+        out.append({
+            "id": it.get("id"),
+            "score": it.get("@search.score", None),
+            "doc": {f: it.get(f, None) for f in select_fields},
+        })
+    return out
 
+# =========================================
+# Score normalization & merge
+# =========================================
+def _minmax_norm(scores: List[Optional[float]]) -> List[float]:
+    vals = [s for s in scores if isinstance(s, (int, float))]
+    if not vals:
+        return [0.0] * len(scores)
+    mn, mx = min(vals), max(vals)
+    if mx <= mn:
+        return [1.0 if isinstance(s, (int, float)) else 0.0 for s in scores]
+    out = []
+    for s in scores:
+        if isinstance(s, (int, float)):
+            out.append((s - mn) / (mx - mn))
+        else:
+            out.append(0.0)
+    return out
 
-def display_result(result: Dict[str, Any]) -> None:
-    """Pretty print the final answer and sources."""
-    print("\n" + "=" * 50)
-    print("查询回答:")
-    print(result["answer"])
-    print("\n" + "=" * 50)
-    print("信息来源:")
-    for i, s in enumerate(result["sources"], start=1):
-        cap = ", ".join(s["capabilities"] or []) if s.get("capabilities") else ""
-        print(f"{i}. id={s['id']} | source_id={s.get('source_id')} | chunk={s.get('chunk_index')} | org={s.get('org_name')} | {s.get('filepath')} | {cap}")
+def merge_and_pick_top(vec_hits, bm_hits, alpha: float = 0.5, top_n: int = 3) -> List[Dict[str, Any]]:
+    merged: Dict[str, Dict[str, Any]] = {}
+    vec_norms = _minmax_norm([h["score"] for h in vec_hits])
+    bm_norms  = _minmax_norm([h["score"] for h in bm_hits])
 
+    for h, nv in zip(vec_hits, vec_norms):
+        did = h["id"]
+        merged.setdefault(did, {
+            "id": did,
+            "vec_score_raw": None, "bm25_score_raw": None,
+            "vec_score_norm": 0.0, "bm25_score_norm": 0.0,
+            "doc": h["doc"]
+        })
+        merged[did]["vec_score_raw"] = h["score"]
+        merged[did]["vec_score_norm"] = nv
 
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("用法: python query_routes.py <查询文本> [配置文件路径] [结果数量]")
-        sys.exit(1)
+    for h, nb in zip(bm_hits, bm_norms):
+        did = h["id"]
+        merged.setdefault(did, {
+            "id": did,
+            "vec_score_raw": None, "bm25_score_raw": None,
+            "vec_score_norm": 0.0, "bm25_score_norm": 0.0,
+            "doc": h["doc"]
+        })
+        merged[did]["bm25_score_raw"]  = h["score"]
+        merged[did]["bm25_score_norm"] = nb
+        if not merged[did].get("doc"):
+            merged[did]["doc"] = h["doc"]
 
-    query_text = sys.argv[1]
-    config_path = "config.json" if len(sys.argv) <= 2 else sys.argv[2]
-    top_k = 3
-    if len(sys.argv) > 3:
-        try:
-            top_k = int(sys.argv[3])
-        except ValueError:
-            print(f"警告: 无效的结果数量参数 '{sys.argv[3]}'，使用默认值 3")
+    rows = []
+    for _, rec in merged.items():
+        vecn = rec["vec_score_norm"]; bmn = rec["bm25_score_norm"]
+        combined = alpha * vecn + (1.0 - alpha) * bmn
+        row = {
+            "id": rec["id"],
+            "combined_score": combined,
+            "vec_score_raw": rec["vec_score_raw"],
+            "bm25_score_raw": rec["bm25_score_raw"],
+            "vec_score_norm": vecn,
+            "bm25_score_norm": bmn,
+        }
+        row.update(rec["doc"])
+        rows.append(row)
 
-    if not os.path.exists(config_path):
-        print(f"错误：配置文件 {config_path} 不存在")
-        sys.exit(1)
+    rows.sort(key=lambda x: x["combined_score"], reverse=True)
+    return rows[:top_n]
 
-    print(f"查询: {query_text}")
-    print(f"使用配置文件: {config_path}")
-    print(f"获取前 {top_k} 个结果")
+# =========================================
+# Pydantic models
+# =========================================
+class HybridSearchRequest(BaseModel):
+    query: str = Field(..., description="用户查询文本")
+    alpha: float = Field(default=0.5, ge=0.0, le=1.0)
+    kvec: int = Field(default=10, ge=1, le=50)
+    kbm25: int = Field(default=10, ge=1, le=50)
+    top_n: int = Field(default=3, ge=1, le=50)
+    index_name: Optional[str] = Field(default=None, description="覆盖默认 index 名")
+    embedding_model: Optional[str] = Field(default=None, description="覆盖默认 embedding 部署名")
+    embedding_dimensions: Optional[int] = Field(default=None, description="覆盖默认 embedding 维度")
+    select_extra: Optional[List[str]] = Field(default=None, description="附加 select 字段")
+    # 是否截断 content 预览
+    content_preview_chars: Optional[int] = Field(default=None, description="如设置则仅返回 content 前 N 字符")
 
-    out = query_with_vector_search(query_text, config_path, top_k)
-    display_result(out)
+class HybridSearchBatchRequest(BaseModel):
+    queries: List[str] = Field(..., min_items=1, description="多条查询")
+    alpha: float = Field(default=0.5, ge=0.0, le=1.0)
+    kvec: int = Field(default=10, ge=1, le=50)
+    kbm25: int = Field(default=10, ge=1, le=50)
+    top_n: int = Field(default=3, ge=1, le=50)
+    index_name: Optional[str] = None
+    embedding_model: Optional[str] = None
+    embedding_dimensions: Optional[int] = None
+    select_extra: Optional[List[str]] = None
+    content_preview_chars: Optional[int] = None
+
+# =========================================
+# Core: single query
+# =========================================
+def _hybrid_query_core(
+    query_text: str,
+    cfg: dict,
+    k_vec: int = 3,
+    k_bm25: int = 3,
+    alpha: float = 0.5,
+    select_extra: Optional[List[str]] = None,
+    index_name: Optional[str] = None,
+    embedding_model: Optional[str] = None,
+    embedding_dimensions: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    embed_dims = int(embedding_dimensions or cfg.get("embedding_dimensions", 1536))
+    embed_model_use = embedding_model or cfg["embedding_model"]
+    embed_client = build_azure_embed_client(cfg)
+    qvec = embed_query(embed_client, embed_model_use, query_text, embed_dims)
+
+    select_fields = list(SELECT_FIELDS)
+    if select_extra:
+        for f in select_extra:
+            if f not in select_fields:
+                select_fields.append(f)
+
+    vec_hits = vector_topk_rest(cfg, qvec, k_vec, select_fields, index_name=index_name)
+    bm_hits  = bm25_topk_rest(cfg, query_text, k_bm25, select_fields, index_name=index_name)
+    top_rows = merge_and_pick_top(vec_hits, bm_hits, alpha=alpha, top_n=max(1, min(50, k_vec, k_bm25)))  # 先合并到 min(kvec,kbm25)
+    return top_rows
+
+def _clean_rows(rows: List[Dict[str, Any]], top_n: int, preview_chars: Optional[int]) -> List[Dict[str, Any]]:
+    rows = rows[:top_n]
+    cleaned = []
+    for r in rows:
+        out = {
+            "id": r.get("id"),
+            "chunk_index": r.get("chunk_index"),
+            "filepath": r.get("filepath"),
+            "content": r.get("content"),
+            "combined_score": r.get("combined_score"),
+            "vec_score_raw": r.get("vec_score_raw"),
+            "bm25_score_raw": r.get("bm25_score_raw"),
+            "vec_score_norm": r.get("vec_score_norm"),
+            "bm25_score_norm": r.get("bm25_score_norm"),
+        }
+        # 结构化字段
+        for f in STRUCT_FIELDS:
+            out[f] = r.get(f, None)
+        # 可选截断 content
+        if preview_chars is not None and isinstance(out["content"], str):
+            c = out["content"].strip()
+            out["content"] = c[:preview_chars] + (" ..." if len(c) > preview_chars else "")
+        cleaned.append(out)
+    return cleaned
+
+# =========================================
+# Endpoints
+# =========================================
+@router.get("/health")
+def health():
+    try:
+        cfg = load_config()
+        # 粗查关键项
+        for k in ["search_service_name", "search_api_version", "index_name", "openai_api_key", "openai_endpoint", "openai_api_version", "embedding_model"]:
+            if k not in cfg:
+                raise ValueError(f"Missing key in config: {k}")
+        return {"ok": True, "service": cfg.get("search_service_name"), "default_index": cfg.get("index_name")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+@router.post("/hybrid")
+def hybrid(req: HybridSearchRequest):
+    try:
+        cfg = load_config()
+        rows = _hybrid_query_core(
+            query_text=req.query,
+            cfg=cfg,
+            k_vec=req.kvec,
+            k_bm25=req.kbm25,
+            alpha=req.alpha,
+            select_extra=req.select_extra,
+            index_name=req.index_name,
+            embedding_model=req.embedding_model,
+            embedding_dimensions=req.embedding_dimensions,
+        )
+        return {
+            "ok": True,
+            "query": req.query,
+            "alpha": req.alpha,
+            "kvec": req.kvec,
+            "kbm25": req.kbm25,
+            "top_n": req.top_n,
+            "results": _clean_rows(rows, req.top_n, req.content_preview_chars),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/hybrid_batch")
+def hybrid_batch(req: HybridSearchBatchRequest):
+    try:
+        cfg = load_config()
+        all_out = []
+        for q in req.queries:
+            rows = _hybrid_query_core(
+                query_text=q,
+                cfg=cfg,
+                k_vec=req.kvec,
+                k_bm25=req.kbm25,
+                alpha=req.alpha,
+                select_extra=req.select_extra,
+                index_name=req.index_name,
+                embedding_model=req.embedding_model,
+                embedding_dimensions=req.embedding_dimensions,
+            )
+            all_out.append({
+                "query": q,
+                "results": _clean_rows(rows, req.top_n, req.content_preview_chars),
+            })
+        return {
+            "ok": True,
+            "alpha": req.alpha,
+            "kvec": req.kvec,
+            "kbm25": req.kbm25,
+            "top_n": req.top_n,
+            "items": all_out,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
