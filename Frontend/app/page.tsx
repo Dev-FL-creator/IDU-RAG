@@ -13,6 +13,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Company } from "@/types/company"
 import { mockCompanies } from "@/lib/mock-companies"
 import { BackendAPI, SearchResult } from "@/lib/api"
+import { PDFUpload } from "@/components/pdf-upload"
 
 const mockMessages: Message[] = [
   {
@@ -74,6 +75,7 @@ export default function Home() {
   const [showDetailPanel, setShowDetailPanel] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking')
+  const [currentView, setCurrentView] = useState<'chat' | 'upload'>('chat')
   const sidebarPanelRef = useRef<ImperativePanelHandle>(null)
   const detailPanelRef = useRef<ImperativePanelHandle>(null)
 
@@ -261,6 +263,24 @@ export default function Home() {
     setSelectedCompany(null)
   }
 
+  const handleUploadComplete = (results: any) => {
+    console.log('Upload completed:', results)
+    // 添加成功消息到聊天
+    const successMessage: Message = {
+      id: Date.now().toString(),
+      role: "assistant",
+      contents: [
+        {
+          type: "text",
+          content: `✅ PDF upload completed successfully! ${results.message || 'Files have been processed and indexed.'}`,
+        },
+      ],
+    }
+    setMessages((prev) => [...prev, successMessage])
+    // 切换回聊天视图
+    setCurrentView('chat')
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <PanelGroup direction="horizontal">
@@ -318,11 +338,34 @@ export default function Home() {
                 )}
                 <div className="flex-1">
                   <h1 className="text-xl font-semibold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-                    AI Assistant
+                    {currentView === 'chat' ? 'AI Assistant' : 'PDF Upload'}
                   </h1>
                   <p className="text-sm text-muted-foreground">
-                    Discover companies, analyze data, and explore detailed insights
+                    {currentView === 'chat' 
+                      ? 'Discover companies, analyze data, and explore detailed insights'
+                      : 'Upload PDF documents to expand the knowledge base'
+                    }
                   </p>
+                </div>
+                
+                {/* View Toggle Buttons */}
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant={currentView === 'chat' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setCurrentView('chat')}
+                    className="h-8"
+                  >
+                    Chat
+                  </Button>
+                  <Button
+                    variant={currentView === 'upload' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setCurrentView('upload')}
+                    className="h-8"
+                  >
+                    Upload PDF
+                  </Button>
                 </div>
               </div>
               
@@ -357,23 +400,50 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Messages Area */}
-            <div className="flex-1 overflow-hidden">
-              <ScrollArea className="h-full">
-                <div className="max-w-5xl mx-auto p-6 space-y-1">
-                  {messages.map((message) => (
-                    <MessageComponent
-                      key={message.id}
-                      message={message}
-                      onCompanyClick={handleCompanyClick}
-                    />
-                  ))}
+            {/* Content Area */}
+            {currentView === 'chat' ? (
+              <>
+                {/* Messages Area */}
+                <div className="flex-1 overflow-hidden">
+                  <ScrollArea className="h-full">
+                    <div className="max-w-5xl mx-auto p-6 space-y-1">
+                      {messages.map((message) => (
+                        <MessageComponent
+                          key={message.id}
+                          message={message}
+                          onCompanyClick={handleCompanyClick}
+                        />
+                      ))}
+                    </div>
+                  </ScrollArea>
                 </div>
-              </ScrollArea>
-            </div>
 
-            {/* Input Area */}
-            <ChatInput onSendMessage={handleSendMessage} disabled={isLoading} />
+                {/* Input Area */}
+                <ChatInput onSendMessage={handleSendMessage} disabled={isLoading} />
+              </>
+            ) : (
+              <>
+                {/* PDF Upload Area */}
+                <div className="flex-1 overflow-hidden">
+                  <ScrollArea className="h-full">
+                    <div className="max-w-4xl mx-auto p-6">
+                      <PDFUpload 
+                        onUploadComplete={handleUploadComplete}
+                        disabled={backendStatus !== 'connected'}
+                      />
+                      
+                      {backendStatus !== 'connected' && (
+                        <div className="mt-4 p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+                          <p className="text-sm text-yellow-600">
+                            ⚠️ Backend service not connected. Please ensure the backend server is running to upload PDFs.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </ScrollArea>
+                </div>
+              </>
+            )}
           </div>
         </Panel>
 

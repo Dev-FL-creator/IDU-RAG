@@ -12,6 +12,14 @@ from azure.core.exceptions import ResourceNotFoundError
 
 from openai import OpenAI as OpenAIPlatform, AzureOpenAI
 
+# Import functions from embed_and_ingest_chunks.py
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from embed_and_ingest_chunks import (
+    extract_text_from_pymupdf, 
+    extract_text_from_pdf, 
+    extract_org_json
+)
+
 # ---------------------------------------------------------
 # Router & progress store
 # ---------------------------------------------------------
@@ -635,3 +643,189 @@ def health():
         return {"ok": True, "has_config": True, "search_service": cfg.get("search_service_name")}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+# ---------------------------------------------------------
+# PDF Preview Extraction (without indexing)
+# ---------------------------------------------------------
+@router.post("/extract_pdf_preview")
+async def extract_pdf_preview(
+    files: List[UploadFile] = File(..., description="One or more PDF files for preview"),
+    chat_model: Optional[str] = Form("deepseek-chat"),
+    pdf_extraction_method: str = Form("pymupdf"),
+    pdf_extraction_fallback: bool = Form(True),
+):
+    """Extract and return structured information from PDFs without indexing"""
+    tmpdir = tempfile.mkdtemp(prefix="pdf_preview_")
+    saved_files: List[str] = []
+    extracted_data = []
+    
+    try:
+        # Save uploaded files
+        for f in files:
+            ext = os.path.splitext(f.filename)[1].lower()
+            if ext not in (".pdf",):
+                continue
+            dest = os.path.join(tmpdir, f.filename)
+            with open(dest, "wb") as out:
+                out.write(await f.read())
+            saved_files.append(dest)
+        
+        if not saved_files:
+            raise HTTPException(status_code=400, detail="No valid PDF files were uploaded.")
+        
+        cfg = load_config()
+        
+        # Process each PDF
+        for pdf_path in saved_files:
+            filename = os.path.basename(pdf_path)
+            
+            # Extract text from PDF
+            text_content = ""
+            if pdf_extraction_method == "pymupdf":
+                text_content = extract_text_from_pymupdf(pdf_path)
+            else:
+                text_content = extract_text_from_pdf(pdf_path, cfg)
+            
+            if not text_content or len(text_content.strip()) < 50:
+                if pdf_extraction_fallback:
+                    text_content = extract_text_from_pymupdf(pdf_path)
+            
+            if text_content and len(text_content.strip()) >= 50:
+                # Use DeepSeek to extract structured information
+                deepseek_client = OpenAIPlatform(
+                    api_key=cfg.get("deepseek_api_key"),
+                    base_url="https://api.deepseek.com"
+                )
+                structured_info = extract_org_json(text_content, deepseek_client, chat_model)
+                
+                extracted_data.append({
+                    "filename": filename,
+                    "text_length": len(text_content),
+                    "structured_info": structured_info,
+                    "raw_text_preview": text_content[:500] + "..." if len(text_content) > 500 else text_content
+                })
+            else:
+                extracted_data.append({
+                    "filename": filename,
+                    "error": "Could not extract sufficient text from PDF",
+                    "text_length": len(text_content) if text_content else 0
+                })
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
+    finally:
+        # Clean up temp files
+        shutil.rmtree(tmpdir, ignore_errors=True)
+    
+    return {
+        "ok": True,
+        "extracted_data": extracted_data,
+        "total_files": len(saved_files)
+    }
+
+# ---------------------------------------------------------
+# Confirm and Index Extracted Data
+# ---------------------------------------------------------
+class ConfirmIndexRequest(BaseModel):
+    extracted_data: List[Dict[str, Any]]
+    index_name: Optional[str] = None
+    embedding_model: Optional[str] = None
+    embedding_dimensions: Optional[int] = 1536
+    batch_upload_size: int = 64
+    write_action: str = "mergeOrUpload"
+
+@router.post("/confirm_and_index")
+async def confirm_and_index(
+    background_tasks: BackgroundTasks,
+    request: ConfirmIndexRequest
+):
+    """Index the confirmed extracted data to Azure Search"""
+    try:
+        cfg = load_config()
+        job_id = str(uuid.uuid4())
+        
+        # Set progress
+        total_items = len(request.extracted_data)
+        _set_progress(job_id, status="processing", current=0, total=total_items)
+        
+        # Create options
+        options = IngestOptions(
+            index_name=request.index_name,
+            embedding_model=request.embedding_model,
+            embedding_dimensions=request.embedding_dimensions,
+            batch_upload_size=request.batch_upload_size,
+            write_action=request.write_action
+        )
+        
+        # Process in background
+        background_tasks.add_task(_process_confirmed_data, job_id, request.extracted_data, options, cfg)
+        
+        return {
+            "ok": True,
+            "job_id": job_id,
+            "message": f"Started indexing {total_items} extracted items"
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Indexing failed: {str(e)}")
+
+# ---------------------------------------------------------
+# Background task for confirmed data
+# ---------------------------------------------------------
+async def _process_confirmed_data(job_id: str, extracted_data: List[Dict[str, Any]], options: IngestOptions, cfg: dict):
+    """Process confirmed extracted data and index to Azure Search"""
+    try:
+        _set_progress(job_id, status="processing", message="Preparing to index confirmed data")
+        
+        # Prepare chunks for indexing
+        all_chunks = []
+        for i, data in enumerate(extracted_data):
+            if "structured_info" not in data or "error" in data:
+                continue
+                
+            structured_info = data["structured_info"]
+            filename = data["filename"]
+            
+            # Create chunks from the structured info
+            chunk = {
+                "id": f"{filename}_{i}",
+                "content": structured_info.get("summary", ""),
+                "org_name": structured_info.get("org_name", ""),
+                "country": structured_info.get("country", ""),
+                "industry": structured_info.get("industry", ""),
+                "capabilities": structured_info.get("capabilities", []),
+                "projects": structured_info.get("projects", []),
+                "filepath": filename,
+                "chunk_index": 0
+            }
+            all_chunks.append(chunk)
+            
+            _set_progress(job_id, current=i+1, message=f"Processed {filename}")
+        
+        if not all_chunks:
+            _set_progress(job_id, status="completed", message="No valid data to index")
+            return
+        
+        # Index to Azure Search
+        _set_progress(job_id, message="Indexing to Azure Search...")
+        
+        # Use the existing indexing logic
+        from .create_index_routes import _ensure_index_exists, _upload_chunks_to_search
+        
+        index_name = options.index_name or cfg.get("search_index_name", "idu-rag-index")
+        embedding_model = options.embedding_model or cfg.get("embedding_model", "text-embedding-3-small")
+        embedding_dimensions = options.embedding_dimensions
+        
+        # Ensure index exists
+        _ensure_index_exists(cfg, index_name, embedding_dimensions)
+        
+        # Upload chunks
+        _upload_chunks_to_search(cfg, all_chunks, index_name, embedding_model, embedding_dimensions)
+        
+        _set_progress(job_id, status="completed", current=len(all_chunks), message=f"Successfully indexed {len(all_chunks)} items")
+        
+    except Exception as e:
+        _set_progress(job_id, status="error", message=f"Error: {str(e)}")
+        print(f"Error in _process_confirmed_data: {e}")
+        import traceback
+        traceback.print_exc()
