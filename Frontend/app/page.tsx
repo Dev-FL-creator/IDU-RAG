@@ -228,12 +228,16 @@ export default function Home() {
     }
   }
 
+  // 新增：点击公司卡片后自动折叠任务栏
   const handleCompanyClick = (company: Company) => {
     setSelectedCompany(company)
+    setIsCollapsed(true) // 自动折叠左侧任务栏
   }
 
+  // 新增：公司详情关闭时恢复任务栏
   const handleCloseCompanyDetail = () => {
     setSelectedCompany(null)
+    setIsCollapsed(false) // 恢复显示任务栏
   }
 
   const handleUploadComplete = (results: any) => {
@@ -257,145 +261,232 @@ export default function Home() {
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <PanelGroup direction="horizontal">
-        {/* Sidebar Panel */}
-        <Panel
-          ref={sidebarPanelRef}
-          defaultSize={20}
-          minSize={5}
-          maxSize={35}
-          collapsible={true}
-          collapsedSize={5}
-          onCollapse={() => setIsCollapsed(true)}
-          onExpand={() => setIsCollapsed(false)}
-        >
-          <Sidebar
-            isCollapsed={isCollapsed}
-            onToggleCollapse={handleToggleSidebar}
-            onNewConversation={handleNewConversation}
-            currentConversationId={currentConversationId}
-            onSelectConversation={handleSelectConversation}
-          />
-        </Panel>
-
-        {/* Resize Handle */}
-        {!isCollapsed && (
-          <PanelResizeHandle className="w-1 hover:w-2 bg-border hover:bg-primary/50 transition-all relative group">
-            <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-6 flex items-center justify-center">
-              <GripVertical className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
-            </div>
-          </PanelResizeHandle>
+        {/* 仅在未选公司时渲染Sidebar Panel */}
+        {!selectedCompany && (
+          <Panel
+            ref={sidebarPanelRef}
+            defaultSize={20}
+            minSize={5}
+            maxSize={35}
+            collapsible={true}
+            collapsedSize={5}
+            onCollapse={() => setIsCollapsed(true)}
+            onExpand={() => setIsCollapsed(false)}
+          >
+            {!isCollapsed && (
+              <Sidebar
+                isCollapsed={isCollapsed}
+                onToggleCollapse={handleToggleSidebar}
+                onNewConversation={handleNewConversation}
+                currentConversationId={currentConversationId}
+                onSelectConversation={handleSelectConversation}
+              />
+            )}
+          </Panel>
         )}
 
-        {/* Chat Panel */}
-        <Panel defaultSize={selectedCompany ? 45 : 80} minSize={30}>
-          <div className="flex flex-col h-full">
-            {/* Chat Header */}
-            <div className="border-b bg-gradient-to-r from-background to-muted/20 backdrop-blur-sm px-6 py-4 flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                {isCollapsed && (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          onClick={handleToggleSidebar}
-                          className="h-9 w-9 shrink-0"
-                        >
-                          <PanelLeftOpen className="h-4 w-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Open sidebar</TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                )}
-                <div>
-                  <h1 className="text-xl font-semibold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-                    {currentView === 'chat' ? 'AI Assistant' : 'PDF Upload'}
-                  </h1>
-                  <p className="text-sm text-muted-foreground">
-                    {currentView === 'chat' 
-                      ? 'Discover companies, analyze data, and explore detailed insights'
-                      : 'Upload PDF documents to expand the knowledge base'
-                    }
-                  </p>
-                </div>
-              </div>
-              
-              {/* View Toggle Buttons - Now in the right side */}
-              <div className="flex items-center gap-2">
-                <Button
-                  variant={currentView === 'chat' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setCurrentView('chat')}
-                  className="h-8"
-                >
-                  Chat
-                </Button>
-                <Button
-                  variant={currentView === 'upload' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setCurrentView('upload')}
-                  className="h-8"
-                >
-                  Upload PDF
-                </Button>
-              </div>
-            </div>
-
-            {/* Content Area */}
-            {currentView === 'chat' ? (
-              <>
-                {/* Messages Area */}
-                <div className="flex-1 overflow-hidden">
-                  <ScrollArea className="h-full">
-                    <div className="max-w-5xl mx-auto p-6 space-y-1">
-                      {messages.map((message) => (
-                        <MessageComponent
-                          key={message.id}
-                          message={message}
-                          onCompanyClick={handleCompanyClick}
-                        />
-                      ))}
-                    </div>
-                  </ScrollArea>
-                </div>
-
-                {/* Input Area */}
-                <ChatInput onSendMessage={handleSendMessage} disabled={isLoading} />
-              </>
-            ) : (
-              <>
-                {/* PDF Upload Area */}
-                <div className="flex-1 overflow-hidden">
-                  <ScrollArea className="h-full">
-                    <div className="max-w-4xl mx-auto p-6">
-                      <PDFUpload 
-                        onUploadComplete={handleUploadComplete}
-                      />
-                    </div>
-                  </ScrollArea>
-                </div>
-              </>
-            )}
-          </div>
-        </Panel>
-
-        {/* Company Detail Panel */}
-        {selectedCompany && (
+        {/* 聊天区和公司详情区可拖动分割 */}
+        {selectedCompany ? (
           <>
+            <Panel defaultSize={50} minSize={20} maxSize={80}>
+              <div className="flex flex-col h-full">
+                {/* Chat Header */}
+                <div className="border-b bg-gradient-to-r from-background to-muted/20 backdrop-blur-sm px-6 py-4 flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    {isCollapsed && (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              onClick={handleToggleSidebar}
+                              className="h-9 w-9 shrink-0"
+                            >
+                              <PanelLeftOpen className="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Open sidebar</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    )}
+                    <div>
+                      <h1 className="text-xl font-semibold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+                        {currentView === 'chat' ? 'AI Assistant' : 'PDF Upload'}
+                      </h1>
+                      <p className="text-sm text-muted-foreground">
+                        {currentView === 'chat' 
+                          ? 'Discover companies, analyze data, and explore detailed insights'
+                          : 'Upload PDF documents to expand the knowledge base'
+                        }
+                      </p>
+                    </div>
+                  </div>
+                  
+                  {/* View Toggle Buttons - Now in the right side */}
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant={currentView === 'chat' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setCurrentView('chat')}
+                      className="h-8"
+                    >
+                      Chat
+                    </Button>
+                    <Button
+                      variant={currentView === 'upload' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setCurrentView('upload')}
+                      className="h-8"
+                    >
+                      Upload PDF
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Content Area */}
+                {currentView === 'chat' ? (
+                  <>
+                    {/* Messages Area */}
+                    <div className="flex-1 overflow-hidden">
+                      <ScrollArea className="h-full">
+                        <div className="max-w-5xl mx-auto p-6 space-y-1">
+                          {messages.map((message) => (
+                            <MessageComponent
+                              key={message.id}
+                              message={message}
+                              onCompanyClick={handleCompanyClick}
+                            />
+                          ))}
+                        </div>
+                      </ScrollArea>
+                    </div>
+
+                    {/* Input Area */}
+                    <ChatInput onSendMessage={handleSendMessage} disabled={isLoading} />
+                  </>
+                ) : (
+                  <>
+                    {/* PDF Upload Area */}
+                    <div className="flex-1 overflow-hidden">
+                      <ScrollArea className="h-full">
+                        <div className="max-w-4xl mx-auto p-6">
+                          <PDFUpload 
+                            onUploadComplete={handleUploadComplete}
+                          />
+                        </div>
+                      </ScrollArea>
+                    </div>
+                  </>
+                )}
+              </div>
+            </Panel>
             <PanelResizeHandle className="w-1 hover:w-2 bg-border hover:bg-primary/50 transition-all relative group">
               <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-6 flex items-center justify-center">
                 <GripVertical className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
               </div>
             </PanelResizeHandle>
-            <Panel defaultSize={35} minSize={25} maxSize={50}>
+            <Panel defaultSize={50} minSize={20} maxSize={80}>
               <CompanyDetailPanel
                 company={selectedCompany}
                 onClose={handleCloseCompanyDetail}
               />
             </Panel>
           </>
+        ) : (
+          <Panel defaultSize={80} minSize={30} maxSize={100}>
+            <div className="flex flex-col h-full">
+              {/* Chat Header */}
+              <div className="border-b bg-gradient-to-r from-background to-muted/20 backdrop-blur-sm px-6 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  {isCollapsed && (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            onClick={handleToggleSidebar}
+                            className="h-9 w-9 shrink-0"
+                          >
+                            <PanelLeftOpen className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Open sidebar</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  )}
+                  <div>
+                    <h1 className="text-xl font-semibold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+                      {currentView === 'chat' ? 'AI Assistant' : 'PDF Upload'}
+                    </h1>
+                    <p className="text-sm text-muted-foreground">
+                      {currentView === 'chat' 
+                        ? 'Discover companies, analyze data, and explore detailed insights'
+                        : 'Upload PDF documents to expand the knowledge base'
+                      }
+                    </p>
+                  </div>
+                </div>
+                
+                {/* View Toggle Buttons - Now in the right side */}
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant={currentView === 'chat' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setCurrentView('chat')}
+                    className="h-8"
+                  >
+                    Chat
+                  </Button>
+                  <Button
+                    variant={currentView === 'upload' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setCurrentView('upload')}
+                    className="h-8"
+                  >
+                    Upload PDF
+                  </Button>
+                </div>
+              </div>
+
+              {/* Content Area */}
+              {currentView === 'chat' ? (
+                <>
+                  {/* Messages Area */}
+                  <div className="flex-1 overflow-hidden">
+                    <ScrollArea className="h-full">
+                      <div className="max-w-5xl mx-auto p-6 space-y-1">
+                        {messages.map((message) => (
+                          <MessageComponent
+                            key={message.id}
+                            message={message}
+                            onCompanyClick={handleCompanyClick}
+                          />
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  </div>
+
+                  {/* Input Area */}
+                  <ChatInput onSendMessage={handleSendMessage} disabled={isLoading} />
+                </>
+              ) : (
+                <>
+                  {/* PDF Upload Area */}
+                  <div className="flex-1 overflow-hidden">
+                    <ScrollArea className="h-full">
+                      <div className="max-w-4xl mx-auto p-6">
+                        <PDFUpload 
+                          onUploadComplete={handleUploadComplete}
+                        />
+                      </div>
+                    </ScrollArea>
+                  </div>
+                </>
+              )}
+            </div>
+          </Panel>
         )}
       </PanelGroup>
     </div>

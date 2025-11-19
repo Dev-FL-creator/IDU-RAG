@@ -105,7 +105,7 @@ export function Sidebar({
   }
 
   return (
-    <div className="flex flex-col h-full w-full border-r bg-gradient-to-b from-muted/20 to-background">
+    <div className="flex flex-col h-full w-full border-r bg-[#eaf3ee]">
       {/* Header */}
       <div className="p-4 space-y-3">
         <div className="flex items-center justify-between">

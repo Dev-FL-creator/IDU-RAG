@@ -16,7 +16,7 @@ export function CompanyCard({ company, onClick, className }: CompanyCardProps) {
   return (
     <Card
       className={cn(
-        "p-4 cursor-pointer hover:shadow-lg transition-all hover:border-primary/50 group",
+        "p-4 cursor-pointer hover:shadow-lg transition-all hover:border-primary/50 group bg-white",
         className
       )}
       onClick={onClick}
