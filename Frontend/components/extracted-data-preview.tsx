@@ -127,7 +127,7 @@ export function ExtractedDataPreview({
       </div>
 
       {/* Data Cards */}
-      <div className="space-y-4">
+      <div className="space-y-4 max-h-96 overflow-y-auto">
         {editData.map((item, index) => (
           <Card key={index} className={item.error ? "border-red-200" : ""}>
             <CardHeader className="pb-3">
