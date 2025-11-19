@@ -159,38 +159,162 @@ def build_semantic_text(blocks: Optional[List[Dict[str, Any]]], max_chars=12000)
     return text[:max_chars]
 
 def chunk_text(text: str, max_chunk_size=5000, overlap=200) -> List[str]:
+    """
+    智能文本分块，优先按完整句子分块，支持多语言
+    """
     chunks = []
     n = len(text)
-    if n == 0: return chunks
+    if n == 0: 
+        return chunks
+    
     overlap = max(0, min(overlap, max_chunk_size - 1))
+    
+    # 定义句子结束标记（支持德语、英语等）
+    sentence_endings = [
+        '. ', '! ', '? ',  # 英语
+        '. ', '! ', '? ',  # 德语等
+        '.\n', '!\n', '?\n',  # 行尾结束
+        ': ', '; ',  # 冒号分号（可选的分割点）
+    ]
+    
+    # 定义段落分割符
+    paragraph_separators = ['\n\n', '\n \n', '\n  \n']
+    
     start = 0
     while start < n:
         end = min(start + max_chunk_size, n)
-        if end < n:
-            bp = text.rfind("\n", start, end)
-            if bp == -1 or (end - bp) > 1000:
-                bp2 = text.rfind(". ", start, end)
-                if bp2 != -1 and (end - bp2) < 1000:
-                    bp = bp2
-            if bp != -1 and bp > start + 1000:
-                end = bp + 1
-        chunk = text[start:end].strip()
-        if chunk:
+        
+        if end >= n:
+            # 最后一个块
+            chunk = text[start:].strip()
+            if chunk:
+                chunks.append(chunk)
+            break
+        
+        # 寻找最佳切割点
+        best_break = -1
+        
+        # 1. 优先寻找段落分割
+        for sep in paragraph_separators:
+            pos = text.rfind(sep, start, end)
+            if pos > start + 500:  # 确保块不会太小
+                best_break = pos + len(sep)
+                break
+        
+        # 2. 如果没有段落分割，寻找句子结束
+        if best_break == -1:
+            for ending in sentence_endings:
+                pos = text.rfind(ending, start, end)
+                if pos > start + 500 and pos > best_break:
+                    best_break = pos + len(ending)
+        
+        # 3. 如果找不到句子结束，寻找其他自然分割点
+        if best_break == -1:
+            # 寻找换行符
+            pos = text.rfind('\n', start, end - 300)  # 避免在最后300字符内切割
+            if pos > start + 800:  # 确保块有足够的大小
+                best_break = pos + 1
+            else:
+                # 寻找逗号后的空格
+                pos = text.rfind(', ', start, end - 300)
+                if pos > start + 800:
+                    best_break = pos + 2
+                else:
+                    # 寻找分号后的空格
+                    pos = text.rfind('; ', start, end - 300)
+                    if pos > start + 800:
+                        best_break = pos + 2
+                    else:
+                        # 最后寻找空格（避免单词中间切割）
+                        pos = text.rfind(' ', start, end - 200)
+                        if pos > start + 800:
+                            best_break = pos + 1
+        
+        # 4. 如果还是找不到，更积极地寻找句子结束点
+        if best_break == -1 or best_break <= start:
+            # 扩大搜索范围寻找句子结束
+            for ending in sentence_endings:
+                pos = text.rfind(ending, start + 200, end)  # 从更早的位置开始搜索
+                if pos > start + 200:
+                    best_break = pos + len(ending)
+                    break
+            
+            # 如果还是找不到，寻找最近的空格
+            if best_break == -1 or best_break <= start:
+                pos = text.rfind(' ', start + max_chunk_size // 2, end)  # 从中间位置开始找
+                if pos != -1 and pos > start + 200:
+                    best_break = pos + 1
+                else:
+                    best_break = end  # 最后手段：强制切割
+        
+        # 提取块并清理
+        chunk = text[start:best_break].strip()
+        
+        # 确保块不为空且有意义
+        if chunk and len(chunk) > 10:
             chunks.append(chunk)
-        if end >= n: break
-        start = max(0, end - overlap)
+        
+        # 设置下一个开始位置（考虑重叠）
+        if best_break >= n:
+            break
+            
+        # 计算重叠起始位置
+        overlap_start = best_break - overlap
+        
+        # 寻找重叠区域内的句子开始位置
+        if overlap > 0 and overlap_start > start:
+            # 寻找句子开始标记
+            sentence_starts = ['. ', '! ', '? ', '\n', ': ']
+            best_overlap_start = overlap_start
+            
+            for s_start in sentence_starts:
+                pos = text.find(s_start, overlap_start, best_break)
+                if pos != -1:
+                    best_overlap_start = pos + len(s_start)
+                    break
+            
+            start = max(start + 1, best_overlap_start)
+        else:
+            start = best_break
+    
     return chunks
 
 def clean_text(text: str) -> str:
-    if not text: return text
+    if not text: 
+        return text
+    
     t = text
+    
+    # 移除特殊标记
     t = re.sub(r":selected:", "", t, flags=re.I)
-    t = re.sub(r"(?i)\b(ACCESS|KARRIERE|NEWS|NEUIGKEITEN|ENGLISH|DEUTSCH|KONTAKT|ÜBER\s+UNS|FORSCHUNG\s*&\s*ENTWICKLUNG|DIENSTLEISTUNGEN\s*&\s*PRODUKTE|PRODUKTE|IMPRESSUM)\b", "", t)
+    
+    # 移除装饰性字符
     t = re.sub(r"[-•=]{2,}", "", t)
+    
+    # 标准化邮箱格式
     t = re.sub(r"([A-Za-z0-9_.+-]+@[A-Za-z0-9-]+\.[A-Za-z0-9-.]+)\s*", r"\1 ", t)
+    
+    # 移除特殊内容
     t = re.sub(r"Temperature\s*\(C\).*?(?=\n[A-ZÄÖÜ]|$)", "", t, flags=re.S)
-    t = re.sub(r"\n{2,}", "\n", t)
-    t = re.sub(r"[ \t]+", " ", t)
+    
+    # 改进句子边界处理
+    # 确保句号后有空格
+    t = re.sub(r'\.([A-ZÄÖÜ])', r'. \1', t)
+    t = re.sub(r'([a-zäöü])\.([A-ZÄÖÜ])', r'\1. \2', t)
+    
+    # 处理德语常见缩写，避免错误断句
+    t = re.sub(r'\b(z\.B\.|d\.h\.|u\.a\.|bzw\.|ca\.|Prof\.|Dr\.|etc\.)\s*', r'\1 ', t)
+    
+    # 标准化空格和换行
+    t = re.sub(r"[ \t]+", " ", t)  # 多个空格合并为一个
+    t = re.sub(r"\n{3,}", "\n\n", t)  # 保留段落分隔，但不要超过双换行
+    t = re.sub(r"\n ", "\n", t)  # 移除行首空格
+    
+    # 清理行尾空格
+    lines = t.split('\n')
+    lines = [line.rstrip() for line in lines]
+    t = '\n'.join(lines)
+    
     return t.strip()
 
 # ---------------------------------------------------------
