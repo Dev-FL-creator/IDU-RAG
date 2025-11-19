@@ -8,7 +8,7 @@ import { ChatInput } from "@/components/chat-input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { CompanyDetailPanel } from "@/components/company-detail-panel"
-import { GripVertical, PanelLeftOpen, AlertCircle, Wifi, WifiOff } from "lucide-react"
+import { GripVertical, PanelLeftOpen, AlertCircle } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Company } from "@/types/company"
 import { mockCompanies } from "@/lib/mock-companies"
@@ -74,27 +74,11 @@ export default function Home() {
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [showDetailPanel, setShowDetailPanel] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
-  const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking')
   const [currentView, setCurrentView] = useState<'chat' | 'upload'>('chat')
   const sidebarPanelRef = useRef<ImperativePanelHandle>(null)
   const detailPanelRef = useRef<ImperativePanelHandle>(null)
 
-  // 检查Backend连接状态
-  useEffect(() => {
-    const checkBackendHealth = async () => {
-      try {
-        const health = await BackendAPI.healthCheck()
-        setBackendStatus(health.ok ? 'connected' : 'disconnected')
-      } catch (error) {
-        setBackendStatus('disconnected')
-      }
-    }
-    
-    checkBackendHealth()
-    // 每30秒检查一次连接状态
-    const interval = setInterval(checkBackendHealth, 30000)
-    return () => clearInterval(interval)
-  }, [])
+
 
   const handleSendMessage = async (content: string) => {
     const userMessage: Message = {
@@ -106,103 +90,87 @@ export default function Home() {
     setIsLoading(true)
 
     try {
-      // 如果Backend连接正常，使用真实搜索
-      if (backendStatus === 'connected') {
-        const searchResponse = await BackendAPI.hybridSearch({
-          query: content,
-          alpha: 0.7,
-          kvec: 10,
-          kbm25: 10,
-          top_n: 5
-        })
+      const searchResponse = await BackendAPI.hybridSearch({
+        query: content,
+        alpha: 0.7,
+        kvec: 10,
+        kbm25: 10,
+        top_n: 5
+      })
 
-        // 将搜索结果转换为消息
-        const resultTexts: string[] = []
-        const companies: Company[] = []
+      // 将搜索结果转换为消息
+      const resultTexts: string[] = []
+      const companies: Company[] = []
 
-        if (searchResponse.results.length > 0) {
-          resultTexts.push(`Found ${searchResponse.results.length} relevant results:\n`)
+      if (searchResponse.results.length > 0) {
+        resultTexts.push(`Found ${searchResponse.results.length} relevant results:\n`)
+        
+        searchResponse.results.forEach((result: SearchResult, index: number) => {
+          const score = (result.combined_score * 100).toFixed(1)
+          let resultText = `${index + 1}. **${result.org_name || 'Organization'}**`
           
-          searchResponse.results.forEach((result: SearchResult, index: number) => {
-            const score = (result.combined_score * 100).toFixed(1)
-            let resultText = `${index + 1}. **${result.org_name || 'Organization'}**`
-            
-            if (result.country) resultText += ` (${result.country})`
-            if (result.industry) resultText += ` - ${result.industry}`
-            
-            resultText += `\n   Score: ${score}%`
-            
-            if (result.capabilities && result.capabilities.length > 0) {
-              resultText += `\n   Capabilities: ${result.capabilities.slice(0, 3).join(', ')}`
-            }
-            
-            if (result.content) {
-              const preview = result.content.substring(0, 200)
-              resultText += `\n   Content: ${preview}${result.content.length > 200 ? '...' : ''}`
-            }
-            
-            resultText += '\n'
-            resultTexts.push(resultText)
+          if (result.country) resultText += ` (${result.country})`
+          if (result.industry) resultText += ` - ${result.industry}`
+          
+          resultText += `\n   Score: ${score}%`
+          
+          if (result.capabilities && result.capabilities.length > 0) {
+            resultText += `\n   Capabilities: ${result.capabilities.slice(0, 3).join(', ')}`
+          }
+          
+          if (result.content) {
+            const preview = result.content.substring(0, 200)
+            resultText += `\n   Content: ${preview}${result.content.length > 200 ? '...' : ''}`
+          }
+          
+          resultText += '\n'
+          resultTexts.push(resultText)
 
-            // 如果有完整的组织信息，创建公司卡片
-            if (result.org_name) {
-              const company: Company = {
-                id: result.id,
-                name: result.org_name,
-                icon: "/images/avatars/company-default.png",
-                shortDescription: result.industry || "Research Organization",
-                fullDescription: result.content || "",
-                industry: result.industry || "",
-                founded: "",
-                location: result.country || "",
-                website: "",
-                images: [],
-                metrics: [
-                  {
-                    label: "Relevance",
-                    value: `${score}%`,
-                    trend: "neutral" as const
-                  }
-                ]
-              }
-              companies.push(company)
+          // 如果有完整的组织信息，创建公司卡片
+          if (result.org_name) {
+            const company: Company = {
+              id: result.id,
+              name: result.org_name,
+              icon: "/images/avatars/company-default.png",
+              shortDescription: result.industry || "Research Organization",
+              fullDescription: result.content || "",
+              industry: result.industry || "",
+              founded: "",
+              location: result.country || "",
+              website: "",
+              images: [],
+              metrics: [
+                {
+                  label: "Relevance",
+                  value: `${score}%`,
+                  trend: "neutral" as const
+                }
+              ]
             }
-          })
-        } else {
-          resultTexts.push("Sorry, no relevant results found. Please try using different keywords.")
-        }
-
-        const aiMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          role: "assistant",
-          contents: [
-            {
-              type: "text",
-              content: resultTexts.join('\n')
-            },
-            // 添加公司卡片
-            ...companies.slice(0, 3).map(company => ({
-              type: "company" as const,
-              content: company.name,
-              company: company
-            }))
-          ],
-        }
-        setMessages((prev) => [...prev, aiMessage])
+            companies.push(company)
+          }
+        })
       } else {
-        // Mock response when backend is not connected
-        const aiMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          role: "assistant",
-          contents: [
-            {
-              type: "text",
-              content: "⚠️ Backend service not connected. Please ensure the backend server is running on http://localhost:8001\n\nThis is a mock response. To get real search results, please start the backend service.",
-            },
-          ],
-        }
-        setMessages((prev) => [...prev, aiMessage])
+        resultTexts.push("Sorry, no relevant results found. Please try using different keywords.")
       }
+
+      const aiMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        contents: [
+          {
+            type: "text",
+            content: resultTexts.join('\n')
+          },
+          // 添加公司卡片
+          ...companies.slice(0, 3).map(company => ({
+            type: "company" as const,
+            content: company.name,
+            company: company
+          }))
+        ],
+      }
+      setMessages((prev) => [...prev, aiMessage])
     } catch (error) {
       console.error('Search failed:', error)
       const errorMessage: Message = {
@@ -336,7 +304,7 @@ export default function Home() {
                     </Tooltip>
                   </TooltipProvider>
                 )}
-                <div className="flex-1">
+                <div>
                   <h1 className="text-xl font-semibold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
                     {currentView === 'chat' ? 'AI Assistant' : 'PDF Upload'}
                   </h1>
@@ -347,56 +315,26 @@ export default function Home() {
                     }
                   </p>
                 </div>
-                
-                {/* View Toggle Buttons */}
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant={currentView === 'chat' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setCurrentView('chat')}
-                    className="h-8"
-                  >
-                    Chat
-                  </Button>
-                  <Button
-                    variant={currentView === 'upload' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setCurrentView('upload')}
-                    className="h-8"
-                  >
-                    Upload PDF
-                  </Button>
-                </div>
               </div>
               
-              {/* Backend连接状态指示器 */}
+              {/* View Toggle Buttons - Now in the right side */}
               <div className="flex items-center gap-2">
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium ${
-                        backendStatus === 'connected' 
-                          ? 'bg-green-500/10 text-green-600 border border-green-500/20' 
-                          : backendStatus === 'disconnected'
-                          ? 'bg-red-500/10 text-red-600 border border-red-500/20'
-                          : 'bg-yellow-500/10 text-yellow-600 border border-yellow-500/20'
-                      }`}>
-                        {backendStatus === 'connected' ? (
-                          <Wifi className="h-3 w-3" />
-                        ) : (
-                          <WifiOff className="h-3 w-3" />
-                        )}
-                        {backendStatus === 'connected' ? 'Backend Connected' : 
-                         backendStatus === 'disconnected' ? 'Backend Disconnected' : 'Checking...'}
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      {backendStatus === 'connected' 
-                        ? 'Backend service is running normally, real-time search available' 
-                        : 'Backend service not connected, using mock data'}
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+                <Button
+                  variant={currentView === 'chat' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setCurrentView('chat')}
+                  className="h-8"
+                >
+                  Chat
+                </Button>
+                <Button
+                  variant={currentView === 'upload' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setCurrentView('upload')}
+                  className="h-8"
+                >
+                  Upload PDF
+                </Button>
               </div>
             </div>
 
@@ -429,16 +367,7 @@ export default function Home() {
                     <div className="max-w-4xl mx-auto p-6">
                       <PDFUpload 
                         onUploadComplete={handleUploadComplete}
-                        disabled={backendStatus !== 'connected'}
                       />
-                      
-                      {backendStatus !== 'connected' && (
-                        <div className="mt-4 p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
-                          <p className="text-sm text-yellow-600">
-                            ⚠️ Backend service not connected. Please ensure the backend server is running to upload PDFs.
-                          </p>
-                        </div>
-                      )}
                     </div>
                   </ScrollArea>
                 </div>
