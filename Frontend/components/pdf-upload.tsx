@@ -242,7 +242,8 @@ export function PDFUpload({ onUploadComplete, disabled }: PDFUploadProps) {
         {files.length > 0 && (
           <div className="mt-4 space-y-2">
             <h4 className="text-sm font-medium">Selected Files:</h4>
-            {files.map((file, index) => (
+            <div className="max-h-64 overflow-y-auto space-y-2">
+              {files.map((file, index) => (
               <div
                 key={index}
                 className="flex items-center gap-3 p-2 bg-muted/50 rounded-md"
@@ -304,7 +305,8 @@ export function PDFUpload({ onUploadComplete, disabled }: PDFUploadProps) {
                   )}
                 </div>
               </div>
-            ))}
+              ))}
+            </div>
             
             {/* File status summary */}
             {files.length > 0 && (
