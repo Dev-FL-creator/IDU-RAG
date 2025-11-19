@@ -119,8 +119,39 @@ export default function Home() {
           }
           
           if (result.content) {
-            const preview = result.content.substring(0, 200)
-            resultText += `\n   Content: ${preview}${result.content.length > 200 ? '...' : ''}`
+            // 智能内容摘要：优先显示关键信息
+            const content = result.content.trim()
+            let preview = ""
+            
+            // 尝试提取关键句子（包含公司名称、技术、服务等）
+            const keywordPatterns = [
+              /.*?(?:company|corporation|technology|research|development|service|product|solution).*?[.!?]/gi,
+              /.*?(?:specialized|focus|expert|leader|pioneer).*?[.!?]/gi,
+              /.*?(?:über uns|about|contact|solution|service).*?[.!?]/gi
+            ]
+            
+            for (const pattern of keywordPatterns) {
+              const matches = content.match(pattern)
+              if (matches && matches.length > 0) {
+                preview = matches[0].substring(0, 150).trim()
+                break
+              }
+            }
+            
+            // 如果没有找到关键句子，使用前150个字符，但确保在句子边界截断
+            if (!preview) {
+              preview = content.substring(0, 150)
+              const lastSentence = preview.lastIndexOf('.')
+              const lastExclamation = preview.lastIndexOf('!')
+              const lastQuestion = preview.lastIndexOf('?')
+              const lastPunct = Math.max(lastSentence, lastExclamation, lastQuestion)
+              
+              if (lastPunct > 50) { // 确保有足够的内容
+                preview = preview.substring(0, lastPunct + 1)
+              }
+            }
+            
+            resultText += `\n   Content: ${preview}${content.length > preview.length ? '...' : ''}`
           }
           
           resultText += '\n'
@@ -135,10 +166,11 @@ export default function Home() {
               shortDescription: result.industry || "Research Organization",
               fullDescription: result.content || "",
               industry: result.industry || "",
-              founded: "",
+              founded: result.founded_year || "",
               location: result.country || "",
-              website: "",
+              website: result.website || "",
               images: [],
+              searchResult: result, // 包含完整的搜索结果数据
               metrics: [
                 {
                   label: "Relevance",

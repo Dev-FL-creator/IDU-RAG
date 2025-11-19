@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { ImageViewer } from "@/components/image-viewer"
+import { StructuredCompanyInfo } from "@/components/structured-company-info"
 import { X, ExternalLink, MapPin, Calendar, TrendingUp, TrendingDown, Minus } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 
@@ -78,15 +79,27 @@ export function CompanyDetailPanel({ company, onClose }: CompanyDetailPanelProps
       {/* Content */}
       <ScrollArea className="flex-1">
         <div className="p-6 space-y-6">
-          {/* Description */}
-          <div>
-            <h3 className="text-lg font-semibold mb-3">About</h3>
-            <p className="text-sm text-foreground/80 leading-relaxed whitespace-pre-wrap">
-              {company.fullDescription}
-            </p>
-          </div>
+          {/* Structured Company Information */}
+          {company.searchResult ? (
+            <>
+              <div>
+                <h3 className="text-lg font-semibold mb-3">About</h3>
+                <StructuredCompanyInfo searchResult={company.searchResult} />
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Fallback to simple description */}
+              <div>
+                <h3 className="text-lg font-semibold mb-3">About</h3>
+                <p className="text-sm text-foreground/80 leading-relaxed whitespace-pre-wrap">
+                  {company.fullDescription}
+                </p>
+              </div>
 
-          <Separator />
+              <Separator />
+            </>
+          )}
 
           {/* Metrics */}
           {company.metrics && company.metrics.length > 0 && (

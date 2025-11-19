@@ -1,3 +1,5 @@
+import { SearchResult } from "@/lib/api"
+
 export interface Company {
   id: string
   name: string
@@ -10,6 +12,7 @@ export interface Company {
   website?: string
   images: CompanyImage[]
   metrics?: CompanyMetric[]
+  searchResult?: SearchResult // 添加搜索结果数据
 }
 
 export interface CompanyImage {
