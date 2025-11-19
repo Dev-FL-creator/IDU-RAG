@@ -18,9 +18,9 @@ interface CompanyDetailPanelProps {
 
 export function CompanyDetailPanel({ company, onClose }: CompanyDetailPanelProps) {
   return (
-    <div className="flex flex-col h-full bg-background border-l">
+    <div className="flex flex-col h-full bg-white border-l">
       {/* Header */}
-      <div className="p-6 border-b bg-gradient-to-r from-background to-muted/20">
+      <div className="p-6 border-b bg-[#e0f2e9]">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-start gap-4 flex-1">
             <Avatar className="h-16 w-16 rounded-xl border-2 border-primary/20">

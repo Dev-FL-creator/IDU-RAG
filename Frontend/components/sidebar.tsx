@@ -172,7 +172,7 @@ export function Sidebar({
                 className={cn(
                   "w-full text-left px-3 py-3 rounded-lg transition-all hover:bg-accent/50",
                   currentConversationId === conversation.id &&
-                    "bg-accent border border-primary/20"
+                    "bg-[#d2ede3] border border-primary/20"
                 )}
               >
                 <div className="flex items-start justify-between gap-2 mb-1">

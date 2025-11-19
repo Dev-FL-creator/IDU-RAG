@@ -77,8 +77,8 @@ export default function Home() {
   const [currentView, setCurrentView] = useState<'chat' | 'upload'>('chat')
   const sidebarPanelRef = useRef<ImperativePanelHandle>(null)
   const detailPanelRef = useRef<ImperativePanelHandle>(null)
-
-
+  // 聊天区滚动ref
+  const chatScrollRef = useRef<HTMLDivElement>(null)
 
   const handleSendMessage = async (content: string) => {
     const userMessage: Message = {
@@ -240,9 +240,9 @@ export default function Home() {
     setIsCollapsed(false) // 恢复显示任务栏
   }
 
+  // PDF上传后自动滚动到底部
   const handleUploadComplete = (results: any) => {
     console.log('Upload completed:', results)
-    // 添加成功消息到聊天
     const successMessage: Message = {
       id: Date.now().toString(),
       role: "assistant",
@@ -254,8 +254,27 @@ export default function Home() {
       ],
     }
     setMessages((prev) => [...prev, successMessage])
-    // 切换回聊天视图
+    setTimeout(() => {
+      setMessages((prev) => [...prev, {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        contents: [
+          {
+            type: "text",
+            content: "✅ Indexing completed! You can now search and chat with the new data.",
+          },
+        ],
+      }])
+      // 自动滚动到底部
+      setTimeout(() => {
+        chatScrollRef.current?.scrollIntoView({ behavior: 'smooth' })
+      }, 100)
+    }, 1500)
     setCurrentView('chat')
+    // 切换后也滚动到底部
+    setTimeout(() => {
+      chatScrollRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }, 300)
   }
 
   return (
@@ -358,6 +377,7 @@ export default function Home() {
                               onCompanyClick={handleCompanyClick}
                             />
                           ))}
+                          <div ref={chatScrollRef} />
                         </div>
                       </ScrollArea>
                     </div>
@@ -464,6 +484,7 @@ export default function Home() {
                             onCompanyClick={handleCompanyClick}
                           />
                         ))}
+                        <div ref={chatScrollRef} />
                       </div>
                     </ScrollArea>
                   </div>
