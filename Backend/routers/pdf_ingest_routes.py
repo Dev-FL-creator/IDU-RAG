@@ -280,42 +280,99 @@ def chunk_text(text: str, max_chunk_size=5000, overlap=200) -> List[str]:
     return chunks
 
 def clean_text(text: str) -> str:
+    """
+    通用PDF文本清理函数 - 适用于各种类型的PDF文档
+    处理网页PDF、扫描PDF、学术论文、技术文档等
+    """
     if not text: 
         return text
     
     t = text
     
-    # 移除特殊标记
+    # ========== 1. 清理网页和交互元素 ==========
+    # 移除网页选择状态和交互元素
     t = re.sub(r":selected:", "", t, flags=re.I)
+    t = re.sub(r"☑|☐|✓|✗", "", t)  # 复选框符号
+    t = re.sub(r"\[x\]|\[ \]", "", t, flags=re.I)  # 文本复选框
     
-    # 移除装饰性字符
-    t = re.sub(r"[-•=]{2,}", "", t)
+    # 移除网页导航和菜单元素
+    t = re.sub(r"(?:^|\n)\s*(?:HOME|ABOUT|CONTACT|MENU|NAVIGATION|LOGIN|REGISTER|SEARCH)\s*(?:\n|$)", "\n", t, flags=re.I | re.M)
+    t = re.sub(r"(?:^|\n)\s*(?:更多|更多信息|mehr erfahren|learn more|read more|click here)\s*(?:\n|$)", "\n", t, flags=re.I | re.M)
     
-    # 标准化邮箱格式
+    # ========== 2. 清理装饰性和分隔符元素 ==========
+    # 移除装饰线和重复符号
+    t = re.sub(r"[-•=_*~#]{3,}", "", t)  # 连续的装饰符号
+    t = re.sub(r"[\.]{3,}", "...", t)  # 多个点号简化为省略号
+    t = re.sub(r"[\\|/]{2,}", "", t)  # 连续的斜杠
+    
+    # 移除页眉页脚模式
+    t = re.sub(r"(?:^|\n)\s*(?:Page\s*\d+|\d+\s*of\s*\d+|Seite\s*\d+)\s*(?:\n|$)", "\n", t, flags=re.I | re.M)
+    
+    # ========== 3. 清理表格和数据残留 ==========
+    # 移除孤立的数值表格行（如温度数据等）
+    t = re.sub(r"(?:^|\n)\s*(?:Temperature|Temp|°C|°F)\s*\([^)]*\).*?(?=\n[A-ZÄÖÜ]|$)", "", t, flags=re.S | re.I)
+    t = re.sub(r"(?:^|\n)\s*\d+\s*\d+\s*\d+\s*\d+\s*(?:\n|$)", "\n", t, flags=re.M)  # 纯数字行
+    
+    # 清理孤立的化学元素和材料符号
+    t = re.sub(r"(?:^|\n)\s*(?:[A-Z][a-z]?\s*){2,5}\s*(?:\n|$)", "\n", t, flags=re.M)  # 如 "Cr Mn Fe"
+    t = re.sub(r"(?:^|\n)\s*\d+[cC]\s*[TV][iI]?\s*[VV]?\s*(?:\n|$)", "\n", t, flags=re.M)  # 如 "3c Ti V"
+    
+    # ========== 4. 标准化联系信息格式 ==========
+    # 标准化邮箱格式（保持联系信息完整）
     t = re.sub(r"([A-Za-z0-9_.+-]+@[A-Za-z0-9-]+\.[A-Za-z0-9-.]+)\s*", r"\1 ", t)
     
-    # 移除特殊内容
-    t = re.sub(r"Temperature\s*\(C\).*?(?=\n[A-ZÄÖÜ]|$)", "", t, flags=re.S)
+    # 标准化电话号码格式
+    t = re.sub(r"(\+\d{1,3}[\s\-]?\d[\d\s\-]{6,}\d)", r"\1", t)  # 保持国际电话号码格式
     
-    # 改进句子边界处理
-    # 确保句号后有空格
-    t = re.sub(r'\.([A-ZÄÖÜ])', r'. \1', t)
+    # ========== 5. 改进句子边界和段落处理 ==========
+    # 确保句号、问号、感叹号后有空格
+    t = re.sub(r'([.!?])([A-ZÄÖÜ])', r'\1 \2', t)
     t = re.sub(r'([a-zäöü])\.([A-ZÄÖÜ])', r'\1. \2', t)
     
-    # 处理德语常见缩写，避免错误断句
-    t = re.sub(r'\b(z\.B\.|d\.h\.|u\.a\.|bzw\.|ca\.|Prof\.|Dr\.|etc\.)\s*', r'\1 ', t)
+    # 处理多语言常见缩写，避免错误断句
+    # 德语缩写
+    t = re.sub(r'\b(z\.B\.|d\.h\.|u\.a\.|bzw\.|ca\.|Prof\.|Dr\.|etc\.|usw\.|z\.T\.|i\.d\.R\.)\s*', r'\1 ', t)
+    # 英语缩写  
+    t = re.sub(r'\b(Mr\.|Mrs\.|Dr\.|Prof\.|Inc\.|Ltd\.|Corp\.|Co\.|etc\.|e\.g\.|i\.e\.|vs\.|cf\.)\s*', r'\1 ', t)
     
-    # 标准化空格和换行
-    t = re.sub(r"[ \t]+", " ", t)  # 多个空格合并为一个
-    t = re.sub(r"\n{3,}", "\n\n", t)  # 保留段落分隔，但不要超过双换行
-    t = re.sub(r"\n ", "\n", t)  # 移除行首空格
+    # ========== 6. 清理OCR错误和特殊字符 ==========
+    # 移除OCR常见的错误字符组合
+    t = re.sub(r"[|\\]{1,2}(?=\s|$)", "", t)  # 孤立的竖线和反斜杠
+    t = re.sub(r"(?:^|\s)[Il1]{2,}(?=\s|$)", " ", t)  # OCR误识别的字母数字组合
     
-    # 清理行尾空格
+    # ========== 7. 移除重复内容 ==========
+    # 移除完全重复的行（保留第一次出现）
     lines = t.split('\n')
-    lines = [line.rstrip() for line in lines]
+    seen_lines = set()
+    unique_lines = []
+    for line in lines:
+        line_clean = line.strip().lower()
+        if line_clean and line_clean not in seen_lines:
+            seen_lines.add(line_clean)
+            unique_lines.append(line)
+        elif not line_clean:  # 保留空行
+            unique_lines.append(line)
+    t = '\n'.join(unique_lines)
+    
+    # ========== 8. 最终格式化 ==========
+    # 标准化空格和换行
+    t = re.sub(r"[ \t]+", " ", t)  # 多个空格/制表符合并为一个空格
+    t = re.sub(r"\n{4,}", "\n\n\n", t)  # 最多保留三个连续换行
+    t = re.sub(r"\n ", "\n", t)  # 移除行首空格
+    t = re.sub(r" \n", "\n", t)  # 移除行尾空格
+    
+    # 清理首尾空白
+    lines = t.split('\n')
+    lines = [line.strip() for line in lines if line.strip() or not line]  # 保留有意义的空行
     t = '\n'.join(lines)
     
-    return t.strip()
+    # 移除文档开头和结尾的多余换行
+    t = t.strip()
+    
+    # 确保段落之间有适当的分隔
+    t = re.sub(r'\n([A-ZÄÖÜ][^.\n]{20,})', r'\n\n\1', t)  # 在看起来像新段落的地方添加分隔
+    
+    return t
 
 # ---------------------------------------------------------
 # Clients & embeddings
