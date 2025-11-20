@@ -143,7 +143,7 @@ export function Sidebar(props: SidebarProps) {
         </div>
         <ScrollArea className="h-[calc(100%-2rem)]">
           <div className="px-2 pb-4 space-y-1">
-            {conversations.map((conversation) => (
+            {[...conversations].reverse().map((conversation) => (
               <button
                 key={conversation.id}
                 onClick={() => onSelectConversation(conversation.id)}
