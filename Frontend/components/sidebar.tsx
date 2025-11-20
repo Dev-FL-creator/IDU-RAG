@@ -16,7 +16,7 @@ interface Conversation {
   id: string
   title: string
   timestamp: string
-  preview: string
+  preview?: string // 预览可选
 }
 
 const projects: Project[] = [
@@ -24,32 +24,7 @@ const projects: Project[] = [
   { id: "2", name: "Project 2" },
 ]
 
-const mockConversations: Conversation[] = [
-  {
-    id: "1",
-    title: "Image Analysis Discussion",
-    timestamp: "2 hours ago",
-    preview: "Can you help me analyze this chart...",
-  },
-  {
-    id: "2",
-    title: "Code Review Session",
-    timestamp: "Yesterday",
-    preview: "Let's review the React components...",
-  },
-  {
-    id: "3",
-    title: "Data Visualization",
-    timestamp: "2 days ago",
-    preview: "I need help creating visualizations...",
-  },
-  {
-    id: "4",
-    title: "API Integration Help",
-    timestamp: "3 days ago",
-    preview: "Having trouble with the REST API...",
-  },
-]
+// mockConversations 移除，使用props.conversations
 
 interface SidebarProps {
   isCollapsed: boolean
@@ -57,15 +32,18 @@ interface SidebarProps {
   onNewConversation: () => void
   currentConversationId?: string
   onSelectConversation: (id: string) => void
+  conversations: Conversation[]
 }
 
-export function Sidebar({
-  isCollapsed,
-  onToggleCollapse,
-  onNewConversation,
-  currentConversationId,
-  onSelectConversation,
-}: SidebarProps) {
+export function Sidebar(props: SidebarProps) {
+  const {
+    isCollapsed,
+    onToggleCollapse,
+    onNewConversation,
+    currentConversationId,
+    onSelectConversation,
+    conversations,
+  } = props;
   if (isCollapsed) {
     return (
       <div className="flex flex-col h-full w-16 border-r bg-muted/10">
@@ -165,7 +143,7 @@ export function Sidebar({
         </div>
         <ScrollArea className="h-[calc(100%-2rem)]">
           <div className="px-2 pb-4 space-y-1">
-            {mockConversations.map((conversation) => (
+            {conversations.map((conversation) => (
               <button
                 key={conversation.id}
                 onClick={() => onSelectConversation(conversation.id)}
@@ -183,9 +161,11 @@ export function Sidebar({
                     {conversation.timestamp}
                   </span>
                 </div>
-                <p className="text-xs text-muted-foreground line-clamp-2">
-                  {conversation.preview}
-                </p>
+                {conversation.preview && (
+                  <p className="text-xs text-muted-foreground line-clamp-2">
+                    {conversation.preview}
+                  </p>
+                )}
               </button>
             ))}
           </div>

@@ -68,9 +68,23 @@ const mockMessages: Message[] = [
 ]
 
 export default function Home() {
-  const [messages, setMessages] = useState<Message[]>(mockMessages)
+  // 会话列表和当前会话
+  const [conversations, setConversations] = useState<{
+    id: string
+    title: string
+    messages: Message[]
+    timestamp: string
+  }[]>([
+    {
+      id: "1",
+      title: "Image Analysis Discussion",
+      messages: mockMessages,
+      timestamp: "2 hours ago"
+    }
+  ])
+  const [currentConversationId, setCurrentConversationId] = useState<string>(conversations[0].id)
+  const [messages, setMessages] = useState<Message[]>(conversations[0].messages)
   const [selectedCompany, setSelectedCompany] = useState<Company | null>(null)
-  const [currentConversationId, setCurrentConversationId] = useState<string>("1")
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [showDetailPanel, setShowDetailPanel] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
@@ -80,6 +94,7 @@ export default function Home() {
   // 聊天区滚动ref
   const chatScrollRef = useRef<HTMLDivElement>(null)
 
+  // 发送消息并保存到当前会话
   const handleSendMessage = async (content: string) => {
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -98,39 +113,27 @@ export default function Home() {
         top_n: 5
       })
 
-      // 将搜索结果转换为消息
       const resultTexts: string[] = []
       const companies: Company[] = []
-
       if (searchResponse.results.length > 0) {
         resultTexts.push(`Found ${searchResponse.results.length} relevant results:\n`)
-        
         searchResponse.results.forEach((result: SearchResult, index: number) => {
           const score = (result.combined_score * 100).toFixed(1)
           let resultText = `${index + 1}. **${result.org_name || 'Organization'}**`
-          
           if (result.country) resultText += ` (${result.country})`
           if (result.industry) resultText += ` - ${result.industry}`
-          
           resultText += `\n   Score: ${score}%`
-          
           if (result.capabilities && result.capabilities.length > 0) {
             resultText += `\n   Capabilities: ${result.capabilities.slice(0, 3).join(', ')}`
           }
-          
           if (result.content) {
-            // 优化：显示完整内容（前1000字符），如超长则加...，并保留原有摘要逻辑
-            let content = result.content.trim()
-            // 进一步清理“:selected:”和“selected”残留
-            content = content.replace(/:selected:?/gi, '').replace(/\bselected\b/gi, '')
-            let displayContent = content.length > 1000 ? content.substring(0, 1000) + '...' : content
+            let c = result.content.trim()
+            c = c.replace(/:selected:?/gi, '').replace(/\bselected\b/gi, '')
+            let displayContent = c.length > 1000 ? c.substring(0, 1000) + '...' : c
             resultText += `\n   Content: ${displayContent}`
           }
-          
           resultText += '\n'
           resultTexts.push(resultText)
-
-          // 如果有完整的组织信息，创建公司卡片
           if (result.org_name) {
             const company: Company = {
               id: result.id,
@@ -143,7 +146,7 @@ export default function Home() {
               location: result.country || "",
               website: result.website || "",
               images: [],
-              searchResult: result, // 包含完整的搜索结果数据
+              searchResult: result,
               metrics: [
                 {
                   label: "Relevance",
@@ -158,7 +161,6 @@ export default function Home() {
       } else {
         resultTexts.push("Sorry, no relevant results found. Please try using different keywords.")
       }
-
       const aiMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
@@ -167,7 +169,6 @@ export default function Home() {
             type: "text",
             content: resultTexts.join('\n')
           },
-          // 添加公司卡片
           ...companies.slice(0, 3).map(company => ({
             type: "company" as const,
             content: company.name,
@@ -175,7 +176,15 @@ export default function Home() {
           }))
         ],
       }
-      setMessages((prev) => [...prev, aiMessage])
+      setMessages((prev) => {
+        const updated = [...prev, aiMessage]
+        setConversations((convs) =>
+          convs.map(conv =>
+            conv.id === currentConversationId ? { ...conv, messages: updated } : conv
+          )
+        )
+        return updated
+      })
     } catch (error) {
       console.error('Search failed:', error)
       const errorMessage: Message = {
@@ -188,16 +197,62 @@ export default function Home() {
           },
         ],
       }
-      setMessages((prev) => [...prev, errorMessage])
+      setMessages((prev) => {
+        const updated = [...prev, errorMessage]
+        setConversations((convs) =>
+          convs.map(conv =>
+            conv.id === currentConversationId ? { ...conv, messages: updated } : conv
+          )
+        )
+        return updated
+      })
     } finally {
       setIsLoading(false)
     }
   }
 
+  // 新建会话，保存当前会话内容
   const handleNewConversation = () => {
+    const now = Date.now()
+    setConversations((prev) => {
+      const idx = prev.findIndex(conv => conv.id === currentConversationId)
+      let updated = [...prev]
+      if (idx !== -1) {
+        updated[idx] = {
+          ...updated[idx],
+          messages: messages.map(m => ({
+            ...m,
+            role: m.role === "assistant" ? "assistant" : "user",
+            contents: m.contents.map(c => ({
+              ...c,
+              type: c.type === "text" ? "text" : c.type === "image" ? "image" : "company"
+            }))
+          }))
+        }
+      }
+      const newConv = {
+        id: now.toString(),
+        title: `Conversation ${updated.length + 1}`,
+        messages: [
+          {
+            id: now.toString(),
+            role: "assistant" as const,
+            contents: [
+              {
+                type: "text" as const,
+                content: "Hello! Starting a new conversation. How can I help you today?",
+              },
+            ],
+          },
+        ],
+        timestamp: new Date().toLocaleString()
+      }
+      return [...updated, newConv]
+    })
+    setCurrentConversationId(now.toString())
     setMessages([
       {
-        id: Date.now().toString(),
+        id: now.toString(),
         role: "assistant",
         contents: [
           {
@@ -207,13 +262,14 @@ export default function Home() {
         ],
       },
     ])
-    setCurrentConversationId(Date.now().toString())
     setSelectedCompany(null)
   }
 
+  // 切换会话
   const handleSelectConversation = (id: string) => {
     setCurrentConversationId(id)
-    setMessages(mockMessages)
+    const conv = conversations.find(c => c.id === id)
+    setMessages(conv ? conv.messages : [])
     setSelectedCompany(null)
   }
 
@@ -228,16 +284,18 @@ export default function Home() {
     }
   }
 
-  // 新增：点击公司卡片后自动折叠任务栏
+  // 点击公司卡片后：选中公司 + 自动折叠任务栏
   const handleCompanyClick = (company: Company) => {
     setSelectedCompany(company)
-    setIsCollapsed(true) // 自动折叠左侧任务栏
+    setIsCollapsed(true)
+    // 补充：如果此时 sidebar 还在，主动折叠一下
+    sidebarPanelRef.current?.collapse()
   }
 
-  // 新增：公司详情关闭时恢复任务栏
+  // 公司详情关闭时恢复任务栏
   const handleCloseCompanyDetail = () => {
     setSelectedCompany(null)
-    setIsCollapsed(false) // 恢复显示任务栏
+    setIsCollapsed(false)
   }
 
   // PDF上传后自动滚动到底部
@@ -265,13 +323,11 @@ export default function Home() {
           },
         ],
       }])
-      // 自动滚动到底部
       setTimeout(() => {
         chatScrollRef.current?.scrollIntoView({ behavior: 'smooth' })
       }, 100)
     }, 1500)
     setCurrentView('chat')
-    // 切换后也滚动到底部
     setTimeout(() => {
       chatScrollRef.current?.scrollIntoView({ behavior: 'smooth' })
     }, 300)
@@ -280,7 +336,7 @@ export default function Home() {
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <PanelGroup direction="horizontal">
-        {/* 仅在未选公司时渲染Sidebar Panel */}
+        {/* 只有在没有选中公司时才渲染 Sidebar Panel */}
         {!selectedCompany && (
           <Panel
             ref={sidebarPanelRef}
@@ -299,14 +355,16 @@ export default function Home() {
                 onNewConversation={handleNewConversation}
                 currentConversationId={currentConversationId}
                 onSelectConversation={handleSelectConversation}
+                conversations={conversations}
               />
             )}
           </Panel>
         )}
 
-        {/* 聊天区和公司详情区可拖动分割 */}
+        {/* 主区：聊天和公司详情分栏，可拖拽 */}
         {selectedCompany ? (
           <>
+            {/* 只剩两个 Panel，各 50%，自然对半分 */}
             <Panel defaultSize={50} minSize={20} maxSize={80}>
               <div className="flex flex-col h-full">
                 {/* Chat Header */}
@@ -341,8 +399,7 @@ export default function Home() {
                       </p>
                     </div>
                   </div>
-                  
-                  {/* View Toggle Buttons - Now in the right side */}
+                  {/* View Toggle Buttons */}
                   <div className="flex items-center gap-2">
                     <Button
                       variant={currentView === 'chat' ? 'default' : 'outline'}
@@ -362,11 +419,9 @@ export default function Home() {
                     </Button>
                   </div>
                 </div>
-
                 {/* Content Area */}
                 {currentView === 'chat' ? (
                   <>
-                    {/* Messages Area */}
                     <div className="flex-1 overflow-hidden">
                       <ScrollArea className="h-full">
                         <div className="max-w-5xl mx-auto p-6 space-y-1">
@@ -381,13 +436,10 @@ export default function Home() {
                         </div>
                       </ScrollArea>
                     </div>
-
-                    {/* Input Area */}
                     <ChatInput onSendMessage={handleSendMessage} disabled={isLoading} />
                   </>
                 ) : (
                   <>
-                    {/* PDF Upload Area */}
                     <div className="flex-1 overflow-hidden">
                       <ScrollArea className="h-full">
                         <div className="max-w-4xl mx-auto p-6">
@@ -448,8 +500,7 @@ export default function Home() {
                     </p>
                   </div>
                 </div>
-                
-                {/* View Toggle Buttons - Now in the right side */}
+                {/* View Toggle Buttons */}
                 <div className="flex items-center gap-2">
                   <Button
                     variant={currentView === 'chat' ? 'default' : 'outline'}
@@ -469,11 +520,9 @@ export default function Home() {
                   </Button>
                 </div>
               </div>
-
               {/* Content Area */}
               {currentView === 'chat' ? (
                 <>
-                  {/* Messages Area */}
                   <div className="flex-1 overflow-hidden">
                     <ScrollArea className="h-full">
                       <div className="max-w-5xl mx-auto p-6 space-y-1">
@@ -488,13 +537,10 @@ export default function Home() {
                       </div>
                     </ScrollArea>
                   </div>
-
-                  {/* Input Area */}
                   <ChatInput onSendMessage={handleSendMessage} disabled={isLoading} />
                 </>
               ) : (
                 <>
-                  {/* PDF Upload Area */}
                   <div className="flex-1 overflow-hidden">
                     <ScrollArea className="h-full">
                       <div className="max-w-4xl mx-auto p-6">
