@@ -8,11 +8,6 @@ export interface ChatMessage {
 }
 
 export class ChatAPI {
-  static async fetchConversationMessages(conversationId: string): Promise<ChatMessage[]> {
-    const res = await fetch(`${BACKEND_URL}/chat/conversation?conversation_id=${conversationId}`);
-    if (!res.ok) throw new Error('Failed to fetch conversation messages');
-    return res.json();
-  }
   static async saveChatMessage(message: ChatMessage) {
     await fetch(`${BACKEND_URL}/chat/save`, {
       method: 'POST',
@@ -24,6 +19,13 @@ export class ChatAPI {
   static async fetchChatHistory(userId: string): Promise<ChatMessage[]> {
     const res = await fetch(`${BACKEND_URL}/chat/history?user_id=${userId}`);
     if (!res.ok) throw new Error('Failed to fetch chat history');
+    return res.json();
+  }
+
+  // Fetch messages for a specific conversation
+  static async fetchConversationMessages(conversationId: string): Promise<ChatMessage[]> {
+    const res = await fetch(`${BACKEND_URL}/chat/conversation?conversation_id=${conversationId}`);
+    if (!res.ok) throw new Error('Failed to fetch conversation messages');
     return res.json();
   }
 }
@@ -87,11 +89,14 @@ export class BackendAPI {
       },
       body: JSON.stringify(request),
     });
+
     if (!response.ok) {
       throw new Error(`Search failed: ${response.status} ${response.statusText}`);
     }
+
     return await response.json();
   }
+
   static async healthCheck(): Promise<{ ok: boolean; service?: string }> {
     try {
       const response = await fetch(`${BACKEND_URL}/`);
@@ -99,9 +104,9 @@ export class BackendAPI {
         return { ok: false };
       }
       const data = await response.json();
-      return {
-        ok: true,
-        service: data.message || 'Backend running'
+      return { 
+        ok: true, 
+        service: data.message || 'Backend running' 
       };
     } catch (error) {
       return { ok: false };
@@ -110,19 +115,26 @@ export class BackendAPI {
 
   static async uploadPDFs(files: FileList): Promise<any> {
     const formData = new FormData();
+    
+    // 添加所有文件
     for (let i = 0; i < files.length; i++) {
       formData.append('files', files[i]);
     }
+    
+    // 添加配置参数
     formData.append('chat_model', 'deepseek-chat');
     formData.append('pdf_extraction_method', 'pymupdf');
     formData.append('embedding_dimensions', '1536');
+
     const response = await fetch(`${BACKEND_URL}/api/upload_pdfs`, {
       method: 'POST',
       body: formData,
     });
+
     if (!response.ok) {
       throw new Error(`File upload failed: ${response.status} ${response.statusText}`);
     }
+
     return await response.json();
   }
 
@@ -131,23 +143,32 @@ export class BackendAPI {
     return await response.json();
   }
 
+  // PDF Preview Extraction (without indexing)
   static async extractPDFPreview(files: FileList): Promise<ExtractedDataResponse> {
     const formData = new FormData();
+    
+    // 添加所有文件
     for (let i = 0; i < files.length; i++) {
       formData.append('files', files[i]);
     }
+    
+    // 添加配置参数
     formData.append('chat_model', 'deepseek-chat');
     formData.append('pdf_extraction_method', 'azure_docint');
+
     const response = await fetch(`${BACKEND_URL}/api/extract_pdf_preview`, {
       method: 'POST',
       body: formData,
     });
+
     if (!response.ok) {
       throw new Error(`PDF extraction failed: ${response.status} ${response.statusText}`);
     }
+
     return await response.json();
   }
 
+  // Confirm and Index extracted data
   static async confirmAndIndex(extractedData: ExtractedData[]): Promise<any> {
     const response = await fetch(`${BACKEND_URL}/api/confirm_and_index`, {
       method: 'POST',
@@ -161,12 +182,15 @@ export class BackendAPI {
         write_action: 'mergeOrUpload'
       }),
     });
+
     if (!response.ok) {
       throw new Error(`Indexing failed: ${response.status} ${response.statusText}`);
     }
+
     return await response.json();
   }
 }
+
 // 添加新的类型定义
 export interface Contact {
   name: string;

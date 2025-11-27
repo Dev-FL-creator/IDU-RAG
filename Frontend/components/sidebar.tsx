@@ -1,11 +1,12 @@
 "use client"
 
-import { Plus, MessageSquare, ChevronLeft, ChevronRight } from "lucide-react"
+import { Plus, MessageSquare, ChevronLeft, ChevronRight, MoreVertical } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
 
 interface Project {
   id: string
@@ -144,29 +145,49 @@ export function Sidebar(props: SidebarProps) {
         <ScrollArea className="h-[calc(100%-2rem)]">
           <div className="px-2 pb-4 space-y-1">
             {[...conversations].reverse().map((conversation) => (
-              <button
-                key={conversation.id}
-                onClick={() => onSelectConversation(conversation.id)}
-                className={cn(
-                  "w-full text-left px-3 py-3 rounded-lg transition-all hover:bg-accent/50",
-                  currentConversationId === conversation.id &&
-                    "bg-[#d2ede3] border border-primary/20"
-                )}
-              >
-                <div className="flex items-start justify-between gap-2 mb-1">
-                  <h4 className="text-sm font-medium line-clamp-1">
-                    {conversation.title}
-                  </h4>
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">
-                    {conversation.timestamp}
-                  </span>
-                </div>
-                {conversation.preview && (
-                  <p className="text-xs text-muted-foreground line-clamp-2">
-                    {conversation.preview}
-                  </p>
-                )}
-              </button>
+              <div key={conversation.id} className="relative group">
+                <button
+                  onClick={() => onSelectConversation(conversation.id)}
+                  className={cn(
+                    "w-full text-left px-3 py-3 rounded-lg transition-all hover:bg-accent/50 flex items-start gap-2 pr-10",
+                    currentConversationId === conversation.id &&
+                      "bg-[#d2ede3] border border-primary/20"
+                  )}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-2 mb-1">
+                      <h4 className="text-sm font-medium line-clamp-1">
+                        {conversation.title}
+                      </h4>
+                      <span className="text-xs text-muted-foreground whitespace-nowrap">
+                        {conversation.timestamp}
+                      </span>
+                    </div>
+                    {conversation.preview && (
+                      <p className="text-xs text-muted-foreground line-clamp-2">
+                        {conversation.preview}
+                      </p>
+                    )}
+                  </div>
+                </button>
+                {/* 三个点更多操作按钮 */}
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger asChild>
+                    <button
+                      className="absolute top-3 right-3 opacity-70 hover:opacity-100 p-1 rounded-full hover:bg-accent transition-opacity"
+                      onClick={e => e.stopPropagation()}
+                      aria-label="More actions"
+                    >
+                      <MoreVertical className="h-4 w-4" />
+                    </button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Content sideOffset={5} className="z-50 min-w-[140px] rounded-md bg-white shadow-lg border p-1">
+                    <DropdownMenu.Item className="px-3 py-2 text-sm hover:bg-accent rounded cursor-pointer">Rename</DropdownMenu.Item>
+                    <DropdownMenu.Item className="px-3 py-2 text-sm hover:bg-accent rounded cursor-pointer">Delete</DropdownMenu.Item>
+                    <DropdownMenu.Item className="px-3 py-2 text-sm hover:bg-accent rounded cursor-pointer">Move to Project</DropdownMenu.Item>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Root>
+              </div>
             ))}
           </div>
         </ScrollArea>

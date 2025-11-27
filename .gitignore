@@ -47,5 +47,6 @@ Frontend/.next/
 Frontend/dist/
 Frontend/build/
 
-# Keep both Backend and Frontend folders tracked
+node_modules/
 
+# Keep both Backend and Frontend folders tracked
