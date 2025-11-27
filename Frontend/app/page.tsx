@@ -21,91 +21,59 @@ const USER_ID = typeof window !== 'undefined' && localStorage.getItem('user_id')
 })()
 import { PDFUpload } from "@/components/pdf-upload"
 
-const mockMessages: Message[] = [
-  {
-    id: "1",
-    role: "assistant",
-    contents: [
-      {
-        type: "text",
-        content: "Hello! I'm your AI assistant. I can help you discover companies, analyze data, and provide detailed insights. Would you like to see some companies in the renewable energy sector?",
-      },
-    ],
-  },
-  {
-    id: "2",
-    role: "user",
-    contents: [
-      {
-        type: "text",
-        content: "Yes, show me companies in renewable energy and AI.",
-      },
-    ],
-  },
-  {
-    id: "3",
-    role: "assistant",
-    contents: [
-      {
-        type: "text",
-        content: "Here are some innovative companies you might be interested in:",
-      },
-      {
-        type: "company",
-        content: mockCompanies[0].name,
-        company: mockCompanies[0],
-      },
-      {
-        type: "company",
-        content: mockCompanies[1].name,
-        company: mockCompanies[1],
-      },
-      {
-        type: "company",
-        content: mockCompanies[2].name,
-        company: mockCompanies[2],
-      },
-      {
-        type: "text",
-        content: "Click on any company card to see more details, including their latest projects, metrics, and image gallery.",
-      },
-    ],
-  },
-]
+// mockMessages 移除，实际数据从后端获取
 
 export default function Home() {
-  // 聊天记录加载
+  // 会话列表
+  const [conversations, setConversations] = useState<{
+    id: string
+    title: string
+    timestamp: string
+    preview?: string
+  }[]>([])
+  // 当前会话ID
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
+  // 当前消息
+  const [messages, setMessages] = useState<Message[]>([])
+
+  // 首次加载会话列表并自动加载最新会话
   useEffect(() => {
     ChatAPI.fetchChatHistory(USER_ID)
       .then((history) => {
         if (history && history.length > 0) {
-          // 只做简单映射，实际可根据需要调整
-          const loadedMessages = history.map((msg, idx) => ({
-            id: msg.timestamp || String(idx),
-            role: msg.role as 'assistant' | 'user',
-            contents: [{ type: 'text' as const, content: msg.content }],
+          const convs = history.map((conv: any) => ({
+            id: conv.conversation_id,
+            title: conv.title || 'Untitled',
+            timestamp: conv.timestamp || '',
+            preview: conv.last_message || '',
           }))
-          setMessages(loadedMessages)
+          setConversations(convs)
+          // 默认选中最新会话
+          const latestId = convs[0].id
+          setCurrentConversationId(latestId)
         }
       })
       .catch(() => {})
   }, [])
-  // 会话列表和当前会话
-  const [conversations, setConversations] = useState<{
-    id: string
-    title: string
-    messages: Message[]
-    timestamp: string
-  }[]>([
-    {
-      id: "1",
-      title: "Image Analysis Discussion",
-      messages: mockMessages,
-      timestamp: "2 hours ago"
+
+  // 加载当前会话消息
+  useEffect(() => {
+    if (currentConversationId) {
+      ChatAPI.fetchConversationMessages(currentConversationId)
+        .then((msgs) => {
+          if (msgs && msgs.length > 0) {
+            const loaded = msgs.map((msg: any, idx: number) => ({
+              id: (msg.timestamp ? msg.timestamp : String(idx)) + '-' + (msg._id ? msg._id : Math.random().toString(36).slice(2, 8)),
+              role: msg.role as 'assistant' | 'user',
+              contents: [{ type: 'text' as const, content: msg.content }],
+            }))
+            setMessages(loaded)
+          }
+          // 如果没有消息，不清空，保留当前 messages
+        })
+        .catch(() => {/* 不清空 messages */})
     }
-  ])
-  const [currentConversationId, setCurrentConversationId] = useState<string>(conversations[0].id)
-  const [messages, setMessages] = useState<Message[]>(conversations[0].messages)
+  }, [currentConversationId])
   const [selectedCompany, setSelectedCompany] = useState<Company | null>(null)
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [showDetailPanel, setShowDetailPanel] = useState(false)
@@ -118,12 +86,13 @@ export default function Home() {
 
   // 发送消息并保存到当前会话
   const handleSendMessage = async (content: string) => {
-    // 保存用户消息到MongoDB
+    // 保存用户消息到MongoDB，带上当前会话ID
     const userMsg: ChatMessage = {
       user_id: USER_ID,
       role: 'user',
       content,
       timestamp: new Date().toISOString(),
+      conversation_id: currentConversationId || undefined,
     }
     ChatAPI.saveChatMessage(userMsg)
     const userMessage: Message = {
@@ -208,19 +177,16 @@ export default function Home() {
       }
       setMessages((prev) => {
         const updated = [...prev, aiMessage]
-        // 保存AI消息到MongoDB
+        // 保存AI消息到MongoDB，带上当前会话ID
         const aiMsg: ChatMessage = {
           user_id: USER_ID,
           role: 'assistant',
           content: resultTexts.join('\n'),
           timestamp: new Date().toISOString(),
+          conversation_id: currentConversationId || undefined,
         }
         ChatAPI.saveChatMessage(aiMsg)
-        setConversations((convs) =>
-          convs.map(conv =>
-            conv.id === currentConversationId ? { ...conv, messages: updated } : conv
-          )
-        )
+        // 不再更新 conversations 的 messages 字段
         return updated
       })
     } catch (error) {
@@ -237,11 +203,7 @@ export default function Home() {
       }
       setMessages((prev) => {
         const updated = [...prev, errorMessage]
-        setConversations((convs) =>
-          convs.map(conv =>
-            conv.id === currentConversationId ? { ...conv, messages: updated } : conv
-          )
-        )
+        // 不再更新 conversations 的 messages 字段
         return updated
       })
     } finally {
@@ -252,62 +214,49 @@ export default function Home() {
   // 新建会话，保存当前会话内容
   const handleNewConversation = () => {
     const now = Date.now()
+    const newConvId = now.toString()
     setConversations((prev) => {
       const idx = prev.findIndex(conv => conv.id === currentConversationId)
       let updated = [...prev]
       if (idx !== -1) {
         updated[idx] = {
           ...updated[idx],
-          messages: messages.map(m => ({
-            ...m,
-            role: m.role === "assistant" ? "assistant" : "user",
-            contents: m.contents.map(c => ({
-              ...c,
-              type: c.type === "text" ? "text" : c.type === "image" ? "image" : "company"
-            }))
-          }))
         }
       }
       const newConv = {
-        id: now.toString(),
+        id: newConvId,
         title: `Conversation ${updated.length + 1}`,
-        messages: [
-          {
-            id: now.toString(),
-            role: "assistant" as const,
-            contents: [
-              {
-                type: "text" as const,
-                content: "Hello! Starting a new conversation. How can I help you today?",
-              },
-            ],
-          },
-        ],
         timestamp: new Date().toLocaleString()
       }
       return [...updated, newConv]
     })
-    setCurrentConversationId(now.toString())
-    setMessages([
-      {
-        id: now.toString(),
-        role: "assistant",
-        contents: [
-          {
-            type: "text",
-            content: "Hello! Starting a new conversation. How can I help you today?",
-          },
-        ],
-      },
-    ])
+    setCurrentConversationId(newConvId)
+    const welcomeMsg: Message = {
+      id: newConvId,
+      role: "assistant",
+      contents: [
+        {
+          type: "text",
+          content: "Hello! Starting a new conversation. How can I help you today?",
+        },
+      ],
+    }
+    setMessages([welcomeMsg])
+    // 立即保存一条欢迎消息到后端，确保会话ID被注册
+    const welcomeChatMsg = {
+      user_id: USER_ID,
+      role: 'assistant',
+      content: "Hello! Starting a new conversation. How can I help you today?",
+      timestamp: new Date().toISOString(),
+      conversation_id: newConvId,
+    }
+    ChatAPI.saveChatMessage(welcomeChatMsg)
     setSelectedCompany(null)
   }
 
   // 切换会话
   const handleSelectConversation = (id: string) => {
     setCurrentConversationId(id)
-    const conv = conversations.find(c => c.id === id)
-    setMessages(conv ? conv.messages : [])
     setSelectedCompany(null)
   }
 
@@ -391,7 +340,7 @@ export default function Home() {
                 isCollapsed={isCollapsed}
                 onToggleCollapse={handleToggleSidebar}
                 onNewConversation={handleNewConversation}
-                currentConversationId={currentConversationId}
+                currentConversationId={currentConversationId || undefined}
                 onSelectConversation={handleSelectConversation}
                 conversations={conversations}
               />
