@@ -1,52 +1,120 @@
+########################################
+# Global & OS files
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+._*
+.Spotlight-V100
+.Trashes
+
+########################################
 # Test Data and temporary files
 Test Data/
 "Test Data"/
-
-# Node.js
-node-v24.8.0-win-x64/
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-
-# Virtual Environment (Backend specific)
-Backend/azure_openai_env/
-Backend/venv/
-Backend/env/
-
-# Debug outputs
-debug_outputs/
-
-# Environment variables
-.env
-.env.local
-
-# Logs
-*.log
-logs/
-
-# Temporary files
 *.tmp
 *.temp
+.temp/
 temp/
 tmp/
 
-# OS generated files
-.DS_Store
-Thumbs.db
+########################################
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
-# IDE files
-.vscode/settings.json
-.idea/
+########################################
+# Environment variables
+.env
+.env.local
+.env*.local
+.env.development
+.env.test
+.env.production
 
-# Node.js (Frontend specific)
+########################################
+# Node.js & Frontend
+node-v24.8.0-win-x64/
+node_modules/
 Frontend/node_modules/
 Frontend/.next/
 Frontend/dist/
 Frontend/build/
+/.next/
+/out/
+/build
+/.pnp
+.pnp.js
 
-node_modules/
+# Package lock files (keep package.json only)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
 
-# Keep both Backend and Frontend folders tracked
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+########################################
+# Python & Backend
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environments
+Backend/azure_openai_env/
+Backend/venv/
+Backend/env/
+azure_openai_env/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+########################################
+# IDE files
+.vscode/
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+########################################
+# Misc
+*.pem
+*.tsbuildinfo
+next-env.d.ts
+coverage
+build
+out
+
+# Backend config
+Backend/config.json
+
+# 备份文件
+*.backup
+*.bak
