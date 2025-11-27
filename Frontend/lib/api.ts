@@ -1,3 +1,26 @@
+// 聊天记录API
+export interface ChatMessage {
+  user_id: string;
+  role: string; // 'user' | 'assistant'
+  content: string;
+  timestamp?: string;
+}
+
+export class ChatAPI {
+  static async saveChatMessage(message: ChatMessage) {
+    await fetch(`${BACKEND_URL}/chat/save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(message),
+    });
+  }
+
+  static async fetchChatHistory(userId: string): Promise<ChatMessage[]> {
+    const res = await fetch(`${BACKEND_URL}/chat/history?user_id=${userId}`);
+    if (!res.ok) throw new Error('Failed to fetch chat history');
+    return res.json();
+  }
+}
 // Backend API调用函数
 
 export interface SearchRequest {

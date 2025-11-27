@@ -12,7 +12,13 @@ import { GripVertical, PanelLeftOpen, AlertCircle } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Company } from "@/types/company"
 import { mockCompanies } from "@/lib/mock-companies"
-import { BackendAPI, SearchResult } from "@/lib/api"
+import { BackendAPI, SearchResult, ChatAPI, ChatMessage } from "@/lib/api"
+// 假设有用户ID（实际项目可用登录用户ID或本地生成）
+const USER_ID = typeof window !== 'undefined' && localStorage.getItem('user_id') || (() => {
+  const id = 'user_' + Math.random().toString(36).slice(2, 10)
+  if (typeof window !== 'undefined') localStorage.setItem('user_id', id)
+  return id
+})()
 import { PDFUpload } from "@/components/pdf-upload"
 
 const mockMessages: Message[] = [
@@ -68,6 +74,22 @@ const mockMessages: Message[] = [
 ]
 
 export default function Home() {
+  // 聊天记录加载
+  useEffect(() => {
+    ChatAPI.fetchChatHistory(USER_ID)
+      .then((history) => {
+        if (history && history.length > 0) {
+          // 只做简单映射，实际可根据需要调整
+          const loadedMessages = history.map((msg, idx) => ({
+            id: msg.timestamp || String(idx),
+            role: msg.role as 'assistant' | 'user',
+            contents: [{ type: 'text' as const, content: msg.content }],
+          }))
+          setMessages(loadedMessages)
+        }
+      })
+      .catch(() => {})
+  }, [])
   // 会话列表和当前会话
   const [conversations, setConversations] = useState<{
     id: string
@@ -96,12 +118,20 @@ export default function Home() {
 
   // 发送消息并保存到当前会话
   const handleSendMessage = async (content: string) => {
+    // 保存用户消息到MongoDB
+    const userMsg: ChatMessage = {
+      user_id: USER_ID,
+      role: 'user',
+      content,
+      timestamp: new Date().toISOString(),
+    }
+    ChatAPI.saveChatMessage(userMsg)
     const userMessage: Message = {
       id: Date.now().toString(),
       role: "user",
       contents: [{ type: "text", content }],
     }
-    setMessages((prev) => [...prev, userMessage])
+  setMessages((prev) => [...prev, userMessage])
     setIsLoading(true)
 
     try {
@@ -161,7 +191,7 @@ export default function Home() {
       } else {
         resultTexts.push("Sorry, no relevant results found. Please try using different keywords.")
       }
-      const aiMessage: Message = {
+  const aiMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
         contents: [
@@ -178,6 +208,14 @@ export default function Home() {
       }
       setMessages((prev) => {
         const updated = [...prev, aiMessage]
+        // 保存AI消息到MongoDB
+        const aiMsg: ChatMessage = {
+          user_id: USER_ID,
+          role: 'assistant',
+          content: resultTexts.join('\n'),
+          timestamp: new Date().toISOString(),
+        }
+        ChatAPI.saveChatMessage(aiMsg)
         setConversations((convs) =>
           convs.map(conv =>
             conv.id === currentConversationId ? { ...conv, messages: updated } : conv
