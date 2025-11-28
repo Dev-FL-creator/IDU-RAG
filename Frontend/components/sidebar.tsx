@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
+import { MoveToProjectDialog } from "@/components/move-to-project-dialog"
 
 interface Project {
   id: string
@@ -99,105 +100,42 @@ export function Sidebar(props: SidebarProps) {
     }
   };
 
-  // 移动会话到项目（下拉选择或新建）
-  const handleMoveConversation = async (conversationId: string) => {
-    let projectId = '';
-    let projectName = '';
-    // 弹窗选择
-    const select = document.createElement('select');
-    select.style.width = '100%';
-    select.style.margin = '8px 0';
-    projects.forEach(p => {
-      if (p.id !== 'default') {
-        const option = document.createElement('option');
-        option.value = p.id;
-        option.text = p.name;
-        select.appendChild(option);
-      }
-    });
-    const newOpt = document.createElement('option');
-    newOpt.value = '__new__';
-    newOpt.text = '+ Create New Project';
-    select.appendChild(newOpt);
-
-    const wrapper = document.createElement('div');
-    wrapper.appendChild(document.createTextNode('Select target project:'));
-    wrapper.appendChild(select);
-    const input = document.createElement('input');
-    input.style.display = 'none';
-    input.style.width = '100%';
-    input.placeholder = 'Enter new project name';
-    wrapper.appendChild(input);
-
-    select.addEventListener('change', () => {
-      if (select.value === '__new__') {
-        input.style.display = '';
-      } else {
-        input.style.display = 'none';
-      }
-    });
-
-    // 用原生dialog实现同步弹窗
-    const dialog = document.createElement('dialog');
-    dialog.appendChild(wrapper);
-    const okBtn = document.createElement('button');
-    okBtn.textContent = 'OK';
-    okBtn.style.margin = '8px 8px 0 0';
-    const cancelBtn = document.createElement('button');
-    cancelBtn.textContent = 'Cancel';
-    cancelBtn.type = 'button';
-    dialog.appendChild(okBtn);
-    dialog.appendChild(cancelBtn);
-    document.body.appendChild(dialog);
-
-    return new Promise<void>((resolve) => {
-      okBtn.onclick = async () => {
-        if (select.value === '__new__') {
-          if (!input.value) {
-            input.focus();
-            return;
-          }
-          // 新建项目
-          projectId = Date.now().toString();
-          projectName = input.value;
-          setProjects(prev => [...prev, { id: projectId, name: projectName }]);
-        } else {
-          projectId = select.value;
-        }
-        dialog.close();
-        document.body.removeChild(dialog);
-        try {
-          await ChatAPI.moveConversationToProject(conversationId, projectId);
-          // 自动刷新会话列表
-          if (typeof window !== 'undefined') {
-            const userId = localStorage.getItem('user_id');
-            if (userId) {
-              const history = await ChatAPI.fetchChatHistory(userId);
-              if (history && history.length > 0) {
-                const convs = history.map((conv: any) => ({
-                  id: conv.conversation_id,
-                  title: conv.title || 'Untitled',
-                  timestamp: conv.timestamp || '',
-                  preview: conv.last_message || '',
-                  project_id: conv.project_id || undefined,
-                }))
-                setConversations(convs);
-              }
+  // 移动会话到项目（美化弹窗/React组件）
+  const [moveDialog, setMoveDialog] = useState<{ open: boolean; conversationId?: string }>({ open: false });
+  const handleMoveConversation = (conversationId: string) => {
+    setMoveDialog({ open: true, conversationId });
+  };
+  const handleMoveDialogSelect = async (projectId: string, projectName?: string) => {
+    // 新建项目
+    if (projectName) {
+      setProjects(prev => [...prev, { id: projectId, name: projectName }]);
+    }
+    try {
+      if (moveDialog.conversationId) {
+        await ChatAPI.moveConversationToProject(moveDialog.conversationId, projectId);
+        // 自动刷新会话列表
+        if (typeof window !== 'undefined') {
+          const userId = localStorage.getItem('user_id');
+          if (userId) {
+            const history = await ChatAPI.fetchChatHistory(userId);
+            if (history && history.length > 0) {
+              const convs = history.map((conv: any) => ({
+                id: conv.conversation_id,
+                title: conv.title || 'Untitled',
+                timestamp: conv.timestamp || '',
+                preview: conv.last_message || '',
+                project_id: conv.project_id || undefined,
+              }))
+              setConversations(convs);
             }
           }
-        } catch (e) {
-          alert('Failed to move conversation');
         }
-        resolve();
-      };
-      cancelBtn.onclick = () => {
-        dialog.close();
-        document.body.removeChild(dialog);
-        resolve();
-      };
-    dialog.showModal();
-    });
+      }
+    } catch (e) {
+      alert('Failed to move conversation');
+    }
   };
+
   if (isCollapsed) {
     return (
       <div className="flex flex-col h-full w-16 border-r bg-muted/10">
@@ -373,6 +311,13 @@ export function Sidebar(props: SidebarProps) {
                       <DropdownMenu.Item className="px-3 py-2 text-sm hover:bg-accent rounded cursor-pointer" onClick={() => handleMoveConversation(conversation.id)}>Move to Project</DropdownMenu.Item>
                     </DropdownMenu.Content>
                   </DropdownMenu.Root>
+                  {/* 移动到项目弹窗 */}
+                  <MoveToProjectDialog
+                    open={moveDialog.open}
+                    projects={projects}
+                    onClose={() => setMoveDialog({ open: false })}
+                    onSelect={handleMoveDialogSelect}
+                  />
                 </div>
               ))}
           </div>
