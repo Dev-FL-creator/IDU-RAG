@@ -15,6 +15,7 @@ import uvicorn
 from routers.query_routes import router as query_router
 from routers.pdf_ingest_routes import router as pdf_router
 from routers.chat_routes import router as chat_router
+from routers.project_routes import router as project_router
 
 # 创建FastAPI应用
 app = FastAPI(
@@ -37,6 +38,7 @@ app.add_middleware(
 app.include_router(query_router)
 app.include_router(pdf_router)
 app.include_router(chat_router)
+app.include_router(project_router)
 
 # ========== 基本路由 ==========
 

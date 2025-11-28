@@ -39,6 +39,17 @@ export class ChatAPI {
     if (!res.ok) throw new Error('Failed to delete conversation');
     return res.json();
   }
+
+  // 移动会话到项目
+  static async moveConversationToProject(conversationId: string, projectId: string) {
+    const res = await fetch(`${BACKEND_URL}/chat/move`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversation_id: conversationId, project_id: projectId }),
+    });
+    if (!res.ok) throw new Error('Failed to move conversation');
+    return res.json();
+  }
 }
 // Backend API调用函数
 

@@ -1,3 +1,11 @@
+export interface Project {
+  id: string;
+  name: string;
+}
+
+export interface ProjectWithConvs extends Project {
+  conversations: string[];
+}
 import { SearchResult } from "@/lib/api"
 
 export interface Company {
