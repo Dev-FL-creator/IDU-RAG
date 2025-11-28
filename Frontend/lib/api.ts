@@ -28,6 +28,17 @@ export class ChatAPI {
     if (!res.ok) throw new Error('Failed to fetch conversation messages');
     return res.json();
   }
+
+  // 删除会话
+  static async deleteConversation(conversationId: string) {
+    const res = await fetch(`${BACKEND_URL}/chat/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversation_id: conversationId }),
+    });
+    if (!res.ok) throw new Error('Failed to delete conversation');
+    return res.json();
+  }
 }
 // Backend API调用函数
 

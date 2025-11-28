@@ -213,24 +213,17 @@ export default function Home() {
 
   // 新建会话，保存当前会话内容
   const handleNewConversation = () => {
-    const now = Date.now()
-    const newConvId = now.toString()
-    setConversations((prev) => {
-      const idx = prev.findIndex(conv => conv.id === currentConversationId)
-      let updated = [...prev]
-      if (idx !== -1) {
-        updated[idx] = {
-          ...updated[idx],
-        }
-      }
-      const newConv = {
-        id: newConvId,
-        title: `Conversation ${updated.length + 1}`,
-        timestamp: new Date().toLocaleString()
-      }
-      return [...updated, newConv]
-    })
-    setCurrentConversationId(newConvId)
+    // 生成唯一会话ID
+    const newConvId = Date.now().toString();
+    // 新会话对象
+    const newConv = {
+      id: newConvId,
+      title: `Conversation ${conversations.length + 1}`,
+      timestamp: new Date().toLocaleString(),
+    };
+    setConversations((prev) => [...prev, newConv]);
+    setCurrentConversationId(newConvId);
+    // 初始化欢迎消息
     const welcomeMsg: Message = {
       id: newConvId,
       role: "assistant",
@@ -240,18 +233,18 @@ export default function Home() {
           content: "Hello! Starting a new conversation. How can I help you today?",
         },
       ],
-    }
-    setMessages([welcomeMsg])
-    // 立即保存一条欢迎消息到后端，确保会话ID被注册
+    };
+    setMessages([welcomeMsg]);
+    // 保存到后端
     const welcomeChatMsg = {
       user_id: USER_ID,
       role: 'assistant',
       content: "Hello! Starting a new conversation. How can I help you today?",
       timestamp: new Date().toISOString(),
       conversation_id: newConvId,
-    }
-    ChatAPI.saveChatMessage(welcomeChatMsg)
-    setSelectedCompany(null)
+    };
+    ChatAPI.saveChatMessage(welcomeChatMsg);
+    setSelectedCompany(null);
   }
 
   // 切换会话
