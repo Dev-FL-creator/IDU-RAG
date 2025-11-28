@@ -113,23 +113,18 @@ export function Sidebar(props: SidebarProps) {
     try {
       if (moveDialog.conversationId) {
         await ChatAPI.moveConversationToProject(moveDialog.conversationId, projectId);
-        // 自动刷新会话列表
-        if (typeof window !== 'undefined') {
-          const userId = localStorage.getItem('user_id');
-          if (userId) {
-            const history = await ChatAPI.fetchChatHistory(userId);
-            if (history && history.length > 0) {
-              const convs = history.map((conv: any) => ({
-                id: conv.conversation_id,
-                title: conv.title || 'Untitled',
-                timestamp: conv.timestamp || '',
-                preview: conv.last_message || '',
-                project_id: conv.project_id || undefined,
-              }))
-              setConversations(convs);
-            }
-          }
-        }
+        // 只本地更新被移动的会话的 project_id
+        setConversations(
+          conversations.map(conv => {
+            const base = {
+              ...conv,
+              timestamp: conv.timestamp || "",
+            };
+            return conv.id === moveDialog.conversationId
+              ? { ...base, project_id: projectId }
+              : base;
+          })
+        );
       }
     } catch (e) {
       alert('Failed to move conversation');
