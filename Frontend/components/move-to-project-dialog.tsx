@@ -15,7 +15,9 @@ interface MoveToProjectDialogProps {
 }
 
 export function MoveToProjectDialog({ open, projects, onClose, onSelect }: MoveToProjectDialogProps) {
-  const [selected, setSelected] = useState<string>(projects[0]?.id || "");
+  // 默认选中第一个非 default 的项目
+  const firstProjectId = projects.find(p => p.id !== 'default')?.id || "";
+  const [selected, setSelected] = useState<string>(firstProjectId);
   const [newProject, setNewProject] = useState("");
   const isNew = selected === "__new__";
 

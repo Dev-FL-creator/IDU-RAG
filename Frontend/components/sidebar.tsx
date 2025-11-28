@@ -106,6 +106,10 @@ export function Sidebar(props: SidebarProps) {
     setMoveDialog({ open: true, conversationId });
   };
   const handleMoveDialogSelect = async (projectId: string, projectName?: string) => {
+    // 日志：打印移动参数
+    if (moveDialog.conversationId) {
+      console.log('[MoveConversation] conversationId:', moveDialog.conversationId, 'projectId:', projectId);
+    }
     // 新建项目
     if (projectName) {
       setProjects(prev => [...prev, { id: projectId, name: projectName }]);

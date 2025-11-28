@@ -70,9 +70,12 @@ async def move_conversation(request: Request):
     data = await request.json()
     conversation_id = data.get("conversation_id")
     project_id = data.get("project_id")
+    print(f"[MoveConversation] conversation_id: {conversation_id}, project_id: {project_id}")
     if not conversation_id or not project_id:
+        print("[MoveConversation] 参数缺失，操作终止")
         return JSONResponse(status_code=400, content={"error": "Missing conversation_id or project_id"})
-    chat_collection.update_many({"conversation_id": conversation_id}, {"$set": {"project_id": project_id}})
+    result = chat_collection.update_many({"conversation_id": conversation_id}, {"$set": {"project_id": project_id}})
+    print(f"[MoveConversation] update matched: {result.matched_count}, modified: {result.modified_count}")
     return {"status": "ok"}
 
 # 获取所有Project及其会话
