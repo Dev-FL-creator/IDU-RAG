@@ -59,11 +59,13 @@ export function Sidebar(props: SidebarProps) {
     setConversations,
   } = props;
 
+  // 生成唯一id
+  const genUniqueId = () => `${Date.now()}_${Math.floor(Math.random() * 100000)}`;
   // 前端Project状态（只存id和name，不存conversations）
   const [projects, setProjects] = useState<Project[]>([
     { id: 'default', name: 'Ungrouped' },
-    { id: '1', name: 'Project 1' },
-    { id: '2', name: 'Project 2' },
+    { id: genUniqueId(), name: 'Project 1' },
+    { id: genUniqueId(), name: 'Project 2' },
   ]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('default');
 
@@ -71,8 +73,8 @@ export function Sidebar(props: SidebarProps) {
   const handleNewProject = () => {
     const name = window.prompt('Enter new project name');
     if (!name) return;
-    const newId = Date.now().toString();
-    setProjects(prev => [...prev, { id: newId, name, conversations: [] }]);
+  const newId = genUniqueId();
+  setProjects(prev => [...prev, { id: newId, name, conversations: [] }]);
   };
 
   // Project重命名
