@@ -38,6 +38,13 @@ interface SidebarProps {
   currentConversationId?: string
   onSelectConversation: (id: string) => void
   conversations: Conversation[]
+  setConversations: (convs: {
+    id: string;
+    title: string;
+    timestamp: string;
+    preview?: string;
+    project_id?: string;
+  }[]) => void
 }
 
 export function Sidebar(props: SidebarProps) {
@@ -48,13 +55,14 @@ export function Sidebar(props: SidebarProps) {
     currentConversationId,
     onSelectConversation,
     conversations,
+    setConversations,
   } = props;
 
-  // 前端Project状态
-  const [projects, setProjects] = useState<ProjectWithConvs[]>([
-    { id: 'default', name: 'Ungrouped', conversations: conversations.filter(c => !c.project_id).map(c => c.id) },
-    { id: '1', name: 'Project 1', conversations: [] },
-    { id: '2', name: 'Project 2', conversations: [] },
+  // 前端Project状态（只存id和name，不存conversations）
+  const [projects, setProjects] = useState<Project[]>([
+    { id: 'default', name: 'Ungrouped' },
+    { id: '1', name: 'Project 1' },
+    { id: '2', name: 'Project 2' },
   ]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('default');
 
@@ -91,16 +99,104 @@ export function Sidebar(props: SidebarProps) {
     }
   };
 
-  // 移动会话到项目
+  // 移动会话到项目（下拉选择或新建）
   const handleMoveConversation = async (conversationId: string) => {
-    const projectId = window.prompt("Please enter the target Project ID (e.g., 1/2):");
-    if (!projectId) return;
-    try {
-      await ChatAPI.moveConversationToProject(conversationId, projectId);
-      if (typeof window !== 'undefined') window.location.reload();
-    } catch (e) {
-      alert('Failed to move conversation');
-    }
+    let projectId = '';
+    let projectName = '';
+    // 弹窗选择
+    const select = document.createElement('select');
+    select.style.width = '100%';
+    select.style.margin = '8px 0';
+    projects.forEach(p => {
+      if (p.id !== 'default') {
+        const option = document.createElement('option');
+        option.value = p.id;
+        option.text = p.name;
+        select.appendChild(option);
+      }
+    });
+    const newOpt = document.createElement('option');
+    newOpt.value = '__new__';
+    newOpt.text = '+ Create New Project';
+    select.appendChild(newOpt);
+
+    const wrapper = document.createElement('div');
+    wrapper.appendChild(document.createTextNode('Select target project:'));
+    wrapper.appendChild(select);
+    const input = document.createElement('input');
+    input.style.display = 'none';
+    input.style.width = '100%';
+    input.placeholder = 'Enter new project name';
+    wrapper.appendChild(input);
+
+    select.addEventListener('change', () => {
+      if (select.value === '__new__') {
+        input.style.display = '';
+      } else {
+        input.style.display = 'none';
+      }
+    });
+
+    // 用原生dialog实现同步弹窗
+    const dialog = document.createElement('dialog');
+    dialog.appendChild(wrapper);
+    const okBtn = document.createElement('button');
+    okBtn.textContent = 'OK';
+    okBtn.style.margin = '8px 8px 0 0';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.type = 'button';
+    dialog.appendChild(okBtn);
+    dialog.appendChild(cancelBtn);
+    document.body.appendChild(dialog);
+
+    return new Promise<void>((resolve) => {
+      okBtn.onclick = async () => {
+        if (select.value === '__new__') {
+          if (!input.value) {
+            input.focus();
+            return;
+          }
+          // 新建项目
+          projectId = Date.now().toString();
+          projectName = input.value;
+          setProjects(prev => [...prev, { id: projectId, name: projectName }]);
+        } else {
+          projectId = select.value;
+        }
+        dialog.close();
+        document.body.removeChild(dialog);
+        try {
+          await ChatAPI.moveConversationToProject(conversationId, projectId);
+          // 自动刷新会话列表
+          if (typeof window !== 'undefined') {
+            const userId = localStorage.getItem('user_id');
+            if (userId) {
+              const history = await ChatAPI.fetchChatHistory(userId);
+              if (history && history.length > 0) {
+                const convs = history.map((conv: any) => ({
+                  id: conv.conversation_id,
+                  title: conv.title || 'Untitled',
+                  timestamp: conv.timestamp || '',
+                  preview: conv.last_message || '',
+                  project_id: conv.project_id || undefined,
+                }))
+                setConversations(convs);
+              }
+            }
+          }
+        } catch (e) {
+          alert('Failed to move conversation');
+        }
+        resolve();
+      };
+      cancelBtn.onclick = () => {
+        dialog.close();
+        document.body.removeChild(dialog);
+        resolve();
+      };
+    dialog.showModal();
+    });
   };
   if (isCollapsed) {
     return (
@@ -231,7 +327,7 @@ export function Sidebar(props: SidebarProps) {
             {[...conversations]
               .filter(c => {
                 if (selectedProjectId === 'default') return !c.project_id;
-                return projects.find(p => p.id === selectedProjectId)?.conversations.includes(c.id);
+                return c.project_id === selectedProjectId;
               })
               .reverse()
               .map((conversation) => (

@@ -336,6 +336,7 @@ export default function Home() {
                 currentConversationId={currentConversationId || undefined}
                 onSelectConversation={handleSelectConversation}
                 conversations={conversations}
+                setConversations={setConversations}
               />
             )}
           </Panel>
