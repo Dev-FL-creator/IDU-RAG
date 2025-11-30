@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useCallback } from "react"
 import { Panel, PanelGroup, PanelResizeHandle, ImperativePanelHandle } from "react-resizable-panels"
 import { Sidebar } from "@/components/sidebar"
 import { MessageComponent, type Message } from "@/components/message"
@@ -8,93 +8,160 @@ import { ChatInput } from "@/components/chat-input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { CompanyDetailPanel } from "@/components/company-detail-panel"
-import { GripVertical, PanelLeftOpen, AlertCircle } from "lucide-react"
+import { GripVertical, PanelLeftOpen, LogIn, LogOut, User as UserIcon } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Company } from "@/types/company"
-import { mockCompanies } from "@/lib/mock-companies"
-import { BackendAPI, SearchResult, ChatAPI, ChatMessage } from "@/lib/api"
-// 假设有用户ID（实际项目可用登录用户ID或本地生成）
-const USER_ID = typeof window !== 'undefined' && localStorage.getItem('user_id') || (() => {
-  const id = 'user_' + Math.random().toString(36).slice(2, 10)
-  if (typeof window !== 'undefined') localStorage.setItem('user_id', id)
-  return id
-})()
+import { BackendAPI, SearchResult, User, ConversationAPI, ProjectAPI, Conversation, Message as ApiMessage } from "@/lib/api"
 import { PDFUpload } from "@/components/pdf-upload"
-
-// mockMessages 移除，实际数据从后端获取
+import { AuthModal } from "@/components/auth-modal"
 
 export default function Home() {
-  // 会话列表
+  // ==========================================================================
+  // Auth State
+  // ==========================================================================
+  const [currentUser, setCurrentUser] = useState<User | null>(null)
+  const [showAuthModal, setShowAuthModal] = useState(false)
+  const [authLoading, setAuthLoading] = useState(true)
+
+  // ==========================================================================
+  // Conversations & Projects State
+  // ==========================================================================
   const [conversations, setConversations] = useState<{
     id: string
     title: string
-    timestamp: string
+    timestamp?: string
     preview?: string
+    project_id?: string
   }[]>([])
-  // 当前会话ID
+
+  const [projects, setProjects] = useState<{
+    id: string
+    name: string
+    is_default?: boolean
+  }[]>([])
+
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
-  // 当前消息
   const [messages, setMessages] = useState<Message[]>([])
 
-  // 首次加载会话列表并自动加载最新会话
-  useEffect(() => {
-    ChatAPI.fetchChatHistory(USER_ID)
-      .then((history) => {
-        if (history && history.length > 0) {
-          const convs = history.map((conv: any) => ({
-            id: conv.conversation_id,
-            title: conv.title || 'Untitled',
-            timestamp: conv.timestamp || '',
-            preview: conv.last_message || '',
-          }))
-          setConversations(convs)
-          // 默认选中最新会话
-          const latestId = convs[0].id
-          setCurrentConversationId(latestId)
-        }
-      })
-      .catch(() => {})
+  // Load user data (conversations and projects)
+  const loadUserData = useCallback(async (userId: string) => {
+    console.log('[loadUserData] Loading data for user:', userId)
+    try {
+      // Load conversations
+      const conversationsResult = await ConversationAPI.list(userId)
+      console.log('[loadUserData] Loaded conversations:', conversationsResult)
+      if (conversationsResult.conversations && conversationsResult.conversations.length > 0) {
+        const convs = conversationsResult.conversations.map((conv: Conversation) => ({
+          id: conv.id,
+          title: conv.title || 'Untitled',
+          timestamp: conv.updated_at || '',
+          preview: conv.last_message_preview || '',
+          project_id: conv.project_id,
+        }))
+        console.log('[loadUserData] Mapped conversations with project_ids:', convs.map((c) => ({ id: c.id, title: c.title, project_id: c.project_id })))
+        setConversations(convs)
+        const latestId = convs[0].id
+        setCurrentConversationId(latestId)
+      }
+
+      // Load projects
+      const projectsResult = await ProjectAPI.list(userId)
+      console.log('[loadUserData] Loaded projects:', projectsResult)
+      if (projectsResult.projects) {
+        const mappedProjects = projectsResult.projects.map(p => ({
+          id: p.id,
+          name: p.name,
+          is_default: p.is_default
+        }))
+        console.log('[loadUserData] Mapped projects:', mappedProjects)
+        setProjects(mappedProjects)
+      }
+    } catch (error) {
+      console.error('[loadUserData] Failed to load user data:', error)
+    }
   }, [])
 
-  // 加载当前会话消息
+  // Check for existing login on mount
   useEffect(() => {
-    if (currentConversationId) {
-      ChatAPI.fetchConversationMessages(currentConversationId)
-        .then((msgs) => {
-          if (msgs && msgs.length > 0) {
-            const loaded = msgs.map((msg: any, idx: number) => ({
-              id: (msg.timestamp ? msg.timestamp : String(idx)) + '-' + (msg._id ? msg._id : Math.random().toString(36).slice(2, 8)),
+    const savedUser = localStorage.getItem('user')
+    if (savedUser) {
+      try {
+        const user = JSON.parse(savedUser)
+        setCurrentUser(user)
+        // Load user's data on page refresh
+        loadUserData(user.id)
+      } catch {
+        localStorage.removeItem('user')
+        localStorage.removeItem('user_id')
+      }
+    }
+    setAuthLoading(false)
+  }, [loadUserData])
+
+  const handleLoginSuccess = (user: User) => {
+    setCurrentUser(user)
+    // Load user's conversations and projects
+    loadUserData(user.id)
+  }
+
+  const handleLogout = () => {
+    setCurrentUser(null)
+    localStorage.removeItem('user')
+    localStorage.removeItem('user_id')
+    // Clear user-specific data
+    setConversations([])
+    setProjects([])
+    setCurrentConversationId(null)
+    setMessages([])
+  }
+
+  // Load conversation messages when conversation changes
+  useEffect(() => {
+    if (currentConversationId && currentUser) {
+      ConversationAPI.get(currentConversationId, currentUser.id)
+        .then((result) => {
+          if (result.messages && result.messages.length > 0) {
+            const loaded = result.messages.map((msg: ApiMessage, idx: number) => ({
+              id: msg.id || String(idx),
               role: msg.role as 'assistant' | 'user',
               contents: [{ type: 'text' as const, content: msg.content }],
             }))
             setMessages(loaded)
+          } else {
+            setMessages([])
           }
-          // 如果没有消息，不清空，保留当前 messages
         })
-        .catch(() => {/* 不清空 messages */})
+        .catch(() => {
+          setMessages([])
+        })
     }
-  }, [currentConversationId])
+  }, [currentConversationId, currentUser])
+
+  // ==========================================================================
+  // UI State
+  // ==========================================================================
   const [selectedCompany, setSelectedCompany] = useState<Company | null>(null)
   const [isCollapsed, setIsCollapsed] = useState(false)
-  const [showDetailPanel, setShowDetailPanel] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [currentView, setCurrentView] = useState<'chat' | 'upload'>('chat')
   const sidebarPanelRef = useRef<ImperativePanelHandle>(null)
-  const detailPanelRef = useRef<ImperativePanelHandle>(null)
-  // 聊天区滚动ref
   const chatScrollRef = useRef<HTMLDivElement>(null)
 
-  // 发送消息并保存到当前会话
+  // ==========================================================================
+  // Message Handling
+  // ==========================================================================
   const handleSendMessage = async (content: string) => {
-    // 保存用户消息到MongoDB，带上当前会话ID
-    const userMsg: ChatMessage = {
-      user_id: USER_ID,
-      role: 'user',
-      content,
-      timestamp: new Date().toISOString(),
-      conversation_id: currentConversationId || undefined,
+    const userId = currentUser?.id || 'anonymous'
+
+    // Save user message (only if logged in and has conversation)
+    if (currentUser && currentConversationId) {
+      ConversationAPI.addMessage(currentConversationId, {
+        user_id: userId,
+        role: 'user',
+        content,
+      }).catch(err => console.error('Failed to save user message:', err))
     }
-    ChatAPI.saveChatMessage(userMsg)
+
     const userMessage: Message = {
       id: Date.now().toString(),
       role: "user",
@@ -160,46 +227,49 @@ export default function Home() {
       } else {
         resultTexts.push("Sorry, no relevant results found. Please try using different keywords.")
       }
-      // 只保存AI消息到后端，不直接setMessages
-      const aiMsg: ChatMessage = {
-        user_id: USER_ID,
-        role: 'assistant',
-        content: resultTexts.join('\n'),
-        timestamp: new Date().toISOString(),
-        conversation_id: currentConversationId || undefined,
-      }
-      await ChatAPI.saveChatMessage(aiMsg)
 
-      // 自动命名：仅当本会话标题为默认/未命名时，自动用AI回复前20字命名
-      if (currentConversationId) {
-        const convIdx = conversations.findIndex(c => c.id === currentConversationId)
-        if (convIdx !== -1 && (conversations[convIdx].title === 'Untitled' || conversations[convIdx].title.startsWith('Conversation'))) {
-          // 用 deepseek 生成标题
-          const userText = content;
-          const aiText = resultTexts.join('\\n');
-          const conversationText = `用户: ${userText}\\nAI: ${aiText}`;
-          ChatAPI.generateTitle(conversationText)
-            .then((title) => {
-              console.log('AI生成标题:', title);
-              return ChatAPI.renameConversation(currentConversationId, title).then(() => {
-                setConversations(prev => prev.map((c, i) => i === convIdx ? { ...c, title } : c))
-              })
-            })
-            .catch(() => {/* 忽略失败 */})
-        }
-      }
-      // 发送完毕后自动刷新消息列表（重新拉取）
-      if (currentConversationId) {
-        const msgs = await ChatAPI.fetchConversationMessages(currentConversationId)
-        if (msgs && msgs.length > 0) {
-          const loaded = msgs.map((msg: any, idx: number) => ({
-            id: (msg.timestamp ? msg.timestamp : String(idx)) + '-' + (msg._id ? msg._id : Math.random().toString(36).slice(2, 8)),
-            role: msg.role as 'assistant' | 'user',
-            contents: [{ type: 'text' as const, content: msg.content }],
+      const aiMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        contents: [
+          {
+            type: "text",
+            content: resultTexts.join('\n')
+          },
+          ...companies.slice(0, 3).map(company => ({
+            type: "company" as const,
+            content: company.name,
+            company: company
           }))
-          setMessages(loaded)
-        }
+        ],
       }
+
+      setMessages((prev) => {
+        const updated = [...prev, aiMessage]
+
+        // Save AI message (only if logged in and has conversation)
+        if (currentUser && currentConversationId) {
+          ConversationAPI.addMessage(currentConversationId, {
+            user_id: userId,
+            role: 'assistant',
+            content: resultTexts.join('\n'),
+          }).catch(err => console.error('Failed to save AI message:', err))
+
+          // Auto-generate title for new conversations
+          const convIdx = conversations.findIndex(c => c.id === currentConversationId)
+          if (convIdx !== -1 && (conversations[convIdx].title === 'Untitled' || conversations[convIdx].title.startsWith('Conversation'))) {
+            const conversationText = `User: ${content}\nAI: ${resultTexts.join('\n')}`
+            ConversationAPI.generateTitle(conversationText)
+              .then((title) => {
+                ConversationAPI.update(currentConversationId, currentUser.id, { title }).then(() => {
+                  setConversations(prev => prev.map((c, i) => i === convIdx ? { ...c, title } : c))
+                })
+              })
+              .catch(() => {})
+          }
+        }
+        return updated
+      })
     } catch (error) {
       console.error('Search failed:', error)
       const errorMessage: Message = {
@@ -208,57 +278,63 @@ export default function Home() {
         contents: [
           {
             type: "text",
-            content: `❌ Search failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            content: `Search failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
           },
         ],
       }
-      setMessages((prev) => {
-        const updated = [...prev, errorMessage]
-        // 不再更新 conversations 的 messages 字段
-        return updated
-      })
+      setMessages((prev) => [...prev, errorMessage])
     } finally {
       setIsLoading(false)
     }
   }
 
-  // 新建会话，保存当前会话内容
-  const handleNewConversation = () => {
-    // 生成唯一会话ID
-    const newConvId = Date.now().toString();
-    // 新会话对象
-    const newConv = {
-      id: newConvId,
-      title: `Conversation ${conversations.length + 1}`,
-      timestamp: new Date().toLocaleString(),
-    };
-    setConversations((prev) => [...prev, newConv]);
-    setCurrentConversationId(newConvId);
-    // 初始化欢迎消息
-    const welcomeMsg: Message = {
-      id: newConvId,
-      role: "assistant",
-      contents: [
-        {
-          type: "text",
-          content: "Hello! Starting a new conversation. How can I help you today?",
-        },
-      ],
-    };
-    setMessages([welcomeMsg]);
-    // 保存到后端
-    const welcomeChatMsg = {
-      user_id: USER_ID,
-      role: 'assistant',
-      content: "Hello! Starting a new conversation. How can I help you today?",
-      timestamp: new Date().toISOString(),
-      conversation_id: newConvId,
-    };
-    ChatAPI.saveChatMessage(welcomeChatMsg);
-    setSelectedCompany(null);
+  // ==========================================================================
+  // Conversation Management
+  // ==========================================================================
+  const handleNewConversation = async () => {
+    if (!currentUser) return
+
+    try {
+      // Create conversation in backend first
+      const result = await ConversationAPI.create({
+        user_id: currentUser.id,
+        title: `Conversation ${conversations.length + 1}`,
+      })
+
+      const newConvId = result.conversation.id
+      const newConv = {
+        id: newConvId,
+        title: result.conversation.title,
+        timestamp: new Date().toLocaleString(),
+      }
+      setConversations((prev) => [...prev, newConv])
+      setCurrentConversationId(newConvId)
+
+      const welcomeMsg: Message = {
+        id: newConvId,
+        role: "assistant",
+        contents: [
+          {
+            type: "text",
+            content: "Hello! Starting a new conversation. How can I help you today?",
+          },
+        ],
+      }
+      setMessages([welcomeMsg])
+
+      // Save welcome message to backend
+      await ConversationAPI.addMessage(newConvId, {
+        user_id: currentUser.id,
+        role: 'assistant',
+        content: "Hello! Starting a new conversation. How can I help you today?",
+      })
+      setSelectedCompany(null)
+    } catch (error) {
+      console.error('Failed to create conversation:', error)
+      alert('Failed to create conversation')
+    }
   }
 
-  // 切换会话
   const handleSelectConversation = (id: string) => {
     setCurrentConversationId(id)
     setSelectedCompany(null)
@@ -275,21 +351,17 @@ export default function Home() {
     }
   }
 
-  // 点击公司卡片后：选中公司 + 自动折叠任务栏
   const handleCompanyClick = (company: Company) => {
     setSelectedCompany(company)
     setIsCollapsed(true)
-    // 补充：如果此时 sidebar 还在，主动折叠一下
     sidebarPanelRef.current?.collapse()
   }
 
-  // 公司详情关闭时恢复任务栏
   const handleCloseCompanyDetail = () => {
     setSelectedCompany(null)
     setIsCollapsed(false)
   }
 
-  // PDF上传后自动滚动到底部
   const handleUploadComplete = (results: any) => {
     console.log('Upload completed:', results)
     const successMessage: Message = {
@@ -298,7 +370,7 @@ export default function Home() {
       contents: [
         {
           type: "text",
-          content: `✅ PDF upload completed successfully! ${results.message || 'Files have been processed and indexed.'}`,
+          content: `PDF upload completed successfully! ${results.message || 'Files have been processed and indexed.'}`,
         },
       ],
     }
@@ -310,7 +382,7 @@ export default function Home() {
         contents: [
           {
             type: "text",
-            content: "✅ Indexing completed! You can now search and chat with the new data.",
+            content: "Indexing completed! You can now search and chat with the new data.",
           },
         ],
       }])
@@ -324,11 +396,151 @@ export default function Home() {
     }, 300)
   }
 
+  // ==========================================================================
+  // Header Component (with auth buttons)
+  // ==========================================================================
+  const Header = ({ showSidebarToggle = false }: { showSidebarToggle?: boolean }) => (
+    <div className="border-b bg-gradient-to-r from-background to-muted/20 backdrop-blur-sm px-6 py-4 flex items-center justify-between">
+      <div className="flex items-center gap-4">
+        {showSidebarToggle && isCollapsed && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={handleToggleSidebar}
+                  className="h-9 w-9 shrink-0"
+                >
+                  <PanelLeftOpen className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Open sidebar</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
+        <div>
+          <h1 className="text-xl font-semibold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+            {currentView === 'chat' ? 'AI Assistant' : 'PDF Upload'}
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            {currentView === 'chat'
+              ? 'Discover companies, analyze data, and explore detailed insights'
+              : 'Upload PDF documents to expand the knowledge base'
+            }
+          </p>
+        </div>
+      </div>
+
+      {/* Right side: View toggle + Auth */}
+      <div className="flex items-center gap-4">
+        {/* View Toggle */}
+        <div className="flex items-center gap-2">
+          <Button
+            variant={currentView === 'chat' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setCurrentView('chat')}
+            className="h-8"
+          >
+            Chat
+          </Button>
+          <Button
+            variant={currentView === 'upload' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setCurrentView('upload')}
+            className="h-8"
+          >
+            Upload PDF
+          </Button>
+        </div>
+
+        {/* Auth Section */}
+        <div className="flex items-center gap-2 pl-4 border-l">
+          {authLoading ? (
+            <div className="h-8 w-20 bg-muted animate-pulse rounded" />
+          ) : currentUser ? (
+            <>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-muted rounded-full">
+                      <UserIcon className="h-4 w-4" />
+                      <span className="text-sm font-medium max-w-[100px] truncate">
+                        {currentUser.username || currentUser.email.split('@')[0]}
+                      </span>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>{currentUser.email}</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleLogout}
+                className="h-8 gap-1"
+              >
+                <LogOut className="h-4 w-4" />
+                Logout
+              </Button>
+            </>
+          ) : (
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => setShowAuthModal(true)}
+              className="h-8 gap-1"
+            >
+              <LogIn className="h-4 w-4" />
+              Sign In
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+
+  // ==========================================================================
+  // Chat Content Component
+  // ==========================================================================
+  const ChatContent = () => (
+    <>
+      <div className="flex-1 overflow-hidden">
+        <ScrollArea className="h-full">
+          <div className="max-w-5xl mx-auto p-6 space-y-1">
+            {messages.length === 0 && (
+              <div className="text-center text-muted-foreground py-20">
+                <p className="text-lg mb-2">Welcome to AI Assistant</p>
+                <p className="text-sm">
+                  {currentUser
+                    ? "Start a conversation by typing a message below."
+                    : "Sign in to save your conversations and organize them into projects."
+                  }
+                </p>
+              </div>
+            )}
+            {messages.map((message) => (
+              <MessageComponent
+                key={message.id}
+                message={message}
+                onCompanyClick={handleCompanyClick}
+              />
+            ))}
+            <div ref={chatScrollRef} />
+          </div>
+        </ScrollArea>
+      </div>
+      <ChatInput onSendMessage={handleSendMessage} disabled={isLoading} />
+    </>
+  )
+
+  // ==========================================================================
+  // Render
+  // ==========================================================================
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <PanelGroup direction="horizontal">
-        {/* 只有在没有选中公司时才渲染 Sidebar Panel */}
-        {!selectedCompany && (
+        {/* Sidebar - Only show for logged-in users and when no company is selected */}
+        {currentUser && !selectedCompany && (
           <Panel
             ref={sidebarPanelRef}
             defaultSize={20}
@@ -348,100 +560,28 @@ export default function Home() {
                 onSelectConversation={handleSelectConversation}
                 conversations={conversations}
                 setConversations={setConversations}
+                projects={projects}
+                setProjects={setProjects}
+                userId={currentUser.id}
               />
             )}
           </Panel>
         )}
 
-        {/* 主区：聊天和公司详情分栏，可拖拽 */}
+        {/* Main Content */}
         {selectedCompany ? (
           <>
-            {/* 只剩两个 Panel，各 50%，自然对半分 */}
             <Panel defaultSize={50} minSize={20} maxSize={80}>
               <div className="flex flex-col h-full">
-                {/* Chat Header */}
-                <div className="border-b bg-gradient-to-r from-background to-muted/20 backdrop-blur-sm px-6 py-4 flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    {isCollapsed && (
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              onClick={handleToggleSidebar}
-                              className="h-9 w-9 shrink-0"
-                            >
-                              <PanelLeftOpen className="h-4 w-4" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>Open sidebar</TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    )}
-                    <div>
-                      <h1 className="text-xl font-semibold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-                        {currentView === 'chat' ? 'AI Assistant' : 'PDF Upload'}
-                      </h1>
-                      <p className="text-sm text-muted-foreground">
-                        {currentView === 'chat' 
-                          ? 'Discover companies, analyze data, and explore detailed insights'
-                          : 'Upload PDF documents to expand the knowledge base'
-                        }
-                      </p>
-                    </div>
+                <Header showSidebarToggle={!!currentUser} />
+                {currentView === 'chat' ? <ChatContent /> : (
+                  <div className="flex-1 overflow-hidden">
+                    <ScrollArea className="h-full">
+                      <div className="max-w-4xl mx-auto p-6">
+                        <PDFUpload onUploadComplete={handleUploadComplete} />
+                      </div>
+                    </ScrollArea>
                   </div>
-                  {/* View Toggle Buttons */}
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant={currentView === 'chat' ? 'default' : 'outline'}
-                      size="sm"
-                      onClick={() => setCurrentView('chat')}
-                      className="h-8"
-                    >
-                      Chat
-                    </Button>
-                    <Button
-                      variant={currentView === 'upload' ? 'default' : 'outline'}
-                      size="sm"
-                      onClick={() => setCurrentView('upload')}
-                      className="h-8"
-                    >
-                      Upload PDF
-                    </Button>
-                  </div>
-                </div>
-                {/* Content Area */}
-                {currentView === 'chat' ? (
-                  <>
-                    <div className="flex-1 overflow-hidden">
-                      <ScrollArea className="h-full">
-                        <div className="max-w-5xl mx-auto p-6 space-y-1">
-                          {messages.map((message) => (
-                            <MessageComponent
-                              key={message.id}
-                              message={message}
-                              onCompanyClick={handleCompanyClick}
-                            />
-                          ))}
-                          <div ref={chatScrollRef} />
-                        </div>
-                      </ScrollArea>
-                    </div>
-                    <ChatInput onSendMessage={handleSendMessage} disabled={isLoading} />
-                  </>
-                ) : (
-                  <>
-                    <div className="flex-1 overflow-hidden">
-                      <ScrollArea className="h-full">
-                        <div className="max-w-4xl mx-auto p-6">
-                          <PDFUpload 
-                            onUploadComplete={handleUploadComplete}
-                          />
-                        </div>
-                      </ScrollArea>
-                    </div>
-                  </>
                 )}
               </div>
             </Panel>
@@ -458,96 +598,29 @@ export default function Home() {
             </Panel>
           </>
         ) : (
-          <Panel defaultSize={80} minSize={30} maxSize={100}>
+          <Panel defaultSize={currentUser ? 80 : 100} minSize={30} maxSize={100}>
             <div className="flex flex-col h-full">
-              {/* Chat Header */}
-              <div className="border-b bg-gradient-to-r from-background to-muted/20 backdrop-blur-sm px-6 py-4 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  {isCollapsed && (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            onClick={handleToggleSidebar}
-                            className="h-9 w-9 shrink-0"
-                          >
-                            <PanelLeftOpen className="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Open sidebar</TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  )}
-                  <div>
-                    <h1 className="text-xl font-semibold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-                      {currentView === 'chat' ? 'AI Assistant' : 'PDF Upload'}
-                    </h1>
-                    <p className="text-sm text-muted-foreground">
-                      {currentView === 'chat' 
-                        ? 'Discover companies, analyze data, and explore detailed insights'
-                        : 'Upload PDF documents to expand the knowledge base'
-                      }
-                    </p>
-                  </div>
+              <Header showSidebarToggle={!!currentUser} />
+              {currentView === 'chat' ? <ChatContent /> : (
+                <div className="flex-1 overflow-hidden">
+                  <ScrollArea className="h-full">
+                    <div className="max-w-4xl mx-auto p-6">
+                      <PDFUpload onUploadComplete={handleUploadComplete} />
+                    </div>
+                  </ScrollArea>
                 </div>
-                {/* View Toggle Buttons */}
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant={currentView === 'chat' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setCurrentView('chat')}
-                    className="h-8"
-                  >
-                    Chat
-                  </Button>
-                  <Button
-                    variant={currentView === 'upload' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setCurrentView('upload')}
-                    className="h-8"
-                  >
-                    Upload PDF
-                  </Button>
-                </div>
-              </div>
-              {/* Content Area */}
-              {currentView === 'chat' ? (
-                <>
-                  <div className="flex-1 overflow-hidden">
-                    <ScrollArea className="h-full">
-                      <div className="max-w-5xl mx-auto p-6 space-y-1">
-                        {messages.map((message) => (
-                          <MessageComponent
-                            key={message.id}
-                            message={message}
-                            onCompanyClick={handleCompanyClick}
-                          />
-                        ))}
-                        <div ref={chatScrollRef} />
-                      </div>
-                    </ScrollArea>
-                  </div>
-                  <ChatInput onSendMessage={handleSendMessage} disabled={isLoading} />
-                </>
-              ) : (
-                <>
-                  <div className="flex-1 overflow-hidden">
-                    <ScrollArea className="h-full">
-                      <div className="max-w-4xl mx-auto p-6">
-                        <PDFUpload 
-                          onUploadComplete={handleUploadComplete}
-                        />
-                      </div>
-                    </ScrollArea>
-                  </div>
-                </>
               )}
             </div>
           </Panel>
         )}
       </PanelGroup>
+
+      {/* Auth Modal */}
+      <AuthModal
+        open={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        onLoginSuccess={handleLoginSuccess}
+      />
     </div>
   )
 }
