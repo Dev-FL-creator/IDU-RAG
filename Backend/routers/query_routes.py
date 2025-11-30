@@ -247,6 +247,22 @@ def _hybrid_query_core(
 def _clean_rows(rows: List[Dict[str, Any]], top_n: int, preview_chars: Optional[int]) -> List[Dict[str, Any]]:
     rows = rows[:top_n]
     cleaned = []
+    import re
+    def clean_content(text: str) -> str:
+        if not text:
+            return ""
+        t = text
+        # 去除 :unselected:、++、多余空行、装饰符号等
+        t = re.sub(r":unselected:", "", t)
+        t = re.sub(r"\+\+", "", t)
+        t = re.sub(r"[-•=_*~#]{3,}", "", t)
+        t = re.sub(r"[\.]{3,}", "...", t)
+        t = re.sub(r"[\\|/]{2,}", "", t)
+        t = re.sub(r"\n{3,}", "\n\n", t)
+        t = re.sub(r"\s+", " ", t)
+        t = t.strip()
+        return t
+
     for r in rows:
         out = {
             "id": r.get("id"),
@@ -262,10 +278,13 @@ def _clean_rows(rows: List[Dict[str, Any]], top_n: int, preview_chars: Optional[
         # 结构化字段
         for f in STRUCT_FIELDS:
             out[f] = r.get(f, None)
-        # 可选截断 content
-        if preview_chars is not None and isinstance(out["content"], str):
-            c = out["content"].strip()
-            out["content"] = c[:preview_chars] + (" ..." if len(c) > preview_chars else "")
+        # content 清理和截断
+        if isinstance(out["content"], str):
+            c = clean_content(out["content"])
+            if preview_chars is not None:
+                out["content"] = c[:preview_chars] + (" ..." if len(c) > preview_chars else "")
+            else:
+                out["content"] = c
         cleaned.append(out)
     return cleaned
 

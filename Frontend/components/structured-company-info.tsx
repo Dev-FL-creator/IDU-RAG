@@ -58,6 +58,23 @@ export function StructuredCompanyInfo({ searchResult }: StructuredCompanyInfoPro
 
   return (
     <div className="space-y-4">
+      {/* Summary Block with Bold Fields */}
+      <div className="p-4 border rounded bg-muted/50 mb-2">
+        <div className="mb-1 text-base font-semibold">
+          {searchResult.org_name && <span>{searchResult.org_name} </span>}
+          {searchResult.country && <span>({searchResult.country}) </span>}
+          {searchResult.industry && <span>- {searchResult.industry}</span>}
+        </div>
+        {searchResult.combined_score !== undefined && (
+          <div className="mb-1"><strong>Score:</strong> {typeof searchResult.combined_score === 'number' ? (searchResult.combined_score * 100).toFixed(1) + '%' : searchResult.combined_score}</div>
+        )}
+        {searchResult.capabilities && searchResult.capabilities.length > 0 && (
+          <div className="mb-1"><strong>Capabilities:</strong> {Array.isArray(searchResult.capabilities) ? searchResult.capabilities.join(', ') : searchResult.capabilities}</div>
+        )}
+        {searchResult.content && (
+          <div className="mb-1"><strong>Content:</strong> {searchResult.content}</div>
+        )}
+      </div>
       {/* Basic Information */}
       <Card>
         <CardHeader className="pb-3">
