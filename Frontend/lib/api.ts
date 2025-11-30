@@ -124,7 +124,7 @@ export interface SearchResponse {
   results: SearchResult[];
 }
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
 
 export class BackendAPI {
   static async hybridSearch(request: SearchRequest): Promise<SearchResponse> {
