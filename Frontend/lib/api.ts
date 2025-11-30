@@ -8,6 +8,19 @@ export interface ChatMessage {
 }
 
 export class ChatAPI {
+
+  // 生成对话标题（调用 deepseek 后端接口）
+  static async generateTitle(conversation: string): Promise<string> {
+    const res = await fetch(`${BACKEND_URL}/chat/generate_title`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversation }),
+    });
+    if (!res.ok) throw new Error('Failed to generate title');
+    const data = await res.json();
+    if (data && data.title) return data.title;
+    throw new Error('No title returned');
+  }
   static async saveChatMessage(message: ChatMessage) {
     await fetch(`${BACKEND_URL}/chat/save`, {
       method: 'POST',
@@ -21,6 +34,17 @@ export class ChatAPI {
     if (!res.ok) throw new Error('Failed to fetch chat history');
     return res.json();
   }
+
+    // 重命名会话
+    static async renameConversation(conversationId: string, newTitle: string) {
+      const res = await fetch(`${BACKEND_URL}/chat/rename`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversation_id: conversationId, new_title: newTitle }),
+      });
+      if (!res.ok) throw new Error('Failed to rename conversation');
+      return res.json();
+    }
 
   // Fetch messages for a specific conversation
   static async fetchConversationMessages(conversationId: string): Promise<ChatMessage[]> {

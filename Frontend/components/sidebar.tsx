@@ -137,6 +137,30 @@ export function Sidebar(props: SidebarProps) {
     }
   };
 
+  // 会话重命名弹窗状态
+  const [renameDialog, setRenameDialog] = useState<{ open: boolean; conversationId?: string }>({ open: false });
+  const handleRenameConversation = (conversationId: string) => {
+    setRenameDialog({ open: true, conversationId });
+  };
+  const handleRenameDialogConfirm = async (newTitle: string) => {
+    if (!renameDialog.conversationId) return;
+    try {
+      await ChatAPI.renameConversation(renameDialog.conversationId, newTitle);
+      setConversations(
+        conversations.map(conv => {
+          const base = {
+            ...conv,
+            timestamp: conv.timestamp || "",
+          };
+          return conv.id === renameDialog.conversationId ? { ...base, title: newTitle } : base;
+        })
+      );
+      setRenameDialog({ open: false });
+    } catch (e) {
+      alert('Failed to rename conversation');
+    }
+  };
+
   if (isCollapsed) {
     return (
       <div className="flex flex-col h-full w-16 border-r bg-muted/10">
@@ -307,7 +331,7 @@ export function Sidebar(props: SidebarProps) {
                       </button>
                     </DropdownMenu.Trigger>
                     <DropdownMenu.Content sideOffset={5} className="z-50 min-w-[140px] rounded-md bg-white shadow-lg border p-1">
-                      <DropdownMenu.Item className="px-3 py-2 text-sm hover:bg-accent rounded cursor-pointer">Rename</DropdownMenu.Item>
+                      <DropdownMenu.Item className="px-3 py-2 text-sm hover:bg-accent rounded cursor-pointer" onClick={() => handleRenameConversation(conversation.id)}>Rename</DropdownMenu.Item>
                       <DropdownMenu.Item className="px-3 py-2 text-sm hover:bg-accent rounded cursor-pointer" onClick={() => handleDeleteConversation(conversation.id)}>Delete</DropdownMenu.Item>
                       <DropdownMenu.Item className="px-3 py-2 text-sm hover:bg-accent rounded cursor-pointer" onClick={() => handleMoveConversation(conversation.id)}>Move to Project</DropdownMenu.Item>
                     </DropdownMenu.Content>
@@ -319,6 +343,41 @@ export function Sidebar(props: SidebarProps) {
                     onClose={() => setMoveDialog({ open: false })}
                     onSelect={handleMoveDialogSelect}
                   />
+                  {/* 会话重命名弹窗 */}
+                  {renameDialog.open && renameDialog.conversationId === conversation.id && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+                      <div className="bg-white rounded-lg shadow-lg p-6 min-w-[300px]">
+                        <h4 className="text-lg font-semibold mb-4">Rename Conversation</h4>
+                        <input
+                          type="text"
+                          className="border rounded px-3 py-2 w-full mb-4"
+                          defaultValue={conversation.title}
+                          autoFocus
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              const value = (e.target as HTMLInputElement).value.trim();
+                              if (value) handleRenameDialogConfirm(value);
+                            }
+                          }}
+                          id="rename-conv-input"
+                        />
+                        <div className="flex gap-2 justify-end">
+                          <button
+                            className="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300"
+                            onClick={() => setRenameDialog({ open: false })}
+                          >Cancel</button>
+                          <button
+                            className="px-4 py-2 rounded bg-primary text-white hover:bg-primary/90"
+                            onClick={() => {
+                              const input = document.getElementById('rename-conv-input') as HTMLInputElement;
+                              const value = input.value.trim();
+                              if (value) handleRenameDialogConfirm(value);
+                            }}
+                          >Confirm</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
           </div>
