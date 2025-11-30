@@ -160,53 +160,46 @@ export default function Home() {
       } else {
         resultTexts.push("Sorry, no relevant results found. Please try using different keywords.")
       }
-      const aiMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        contents: [
-          {
-            type: "text",
-            content: resultTexts.join('\n')
-          },
-          ...companies.slice(0, 3).map(company => ({
-            type: "company" as const,
-            content: company.name,
-            company: company
-          }))
-        ],
+      // 只保存AI消息到后端，不直接setMessages
+      const aiMsg: ChatMessage = {
+        user_id: USER_ID,
+        role: 'assistant',
+        content: resultTexts.join('\n'),
+        timestamp: new Date().toISOString(),
+        conversation_id: currentConversationId || undefined,
       }
-      setMessages((prev) => {
-        const updated = [...prev, aiMessage]
-        // 保存AI消息到MongoDB，带上当前会话ID
-        const aiMsg: ChatMessage = {
-          user_id: USER_ID,
-          role: 'assistant',
-          content: resultTexts.join('\n'),
-          timestamp: new Date().toISOString(),
-          conversation_id: currentConversationId || undefined,
-        }
-        ChatAPI.saveChatMessage(aiMsg)
+      await ChatAPI.saveChatMessage(aiMsg)
 
-        // 自动命名：仅当本会话标题为默认/未命名时，自动用AI回复前20字命名
-        if (currentConversationId) {
-          const convIdx = conversations.findIndex(c => c.id === currentConversationId)
-          if (convIdx !== -1 && (conversations[convIdx].title === 'Untitled' || conversations[convIdx].title.startsWith('Conversation'))) {
-            // 用 deepseek 生成标题
-            const userText = content;
-            const aiText = resultTexts.join('\\n');
-            const conversationText = `用户: ${userText}\\nAI: ${aiText}`;
-            ChatAPI.generateTitle(conversationText)
-              .then((title) => {
-                console.log('AI生成标题:', title);
-                return ChatAPI.renameConversation(currentConversationId, title).then(() => {
-                  setConversations(prev => prev.map((c, i) => i === convIdx ? { ...c, title } : c))
-                })
+      // 自动命名：仅当本会话标题为默认/未命名时，自动用AI回复前20字命名
+      if (currentConversationId) {
+        const convIdx = conversations.findIndex(c => c.id === currentConversationId)
+        if (convIdx !== -1 && (conversations[convIdx].title === 'Untitled' || conversations[convIdx].title.startsWith('Conversation'))) {
+          // 用 deepseek 生成标题
+          const userText = content;
+          const aiText = resultTexts.join('\\n');
+          const conversationText = `用户: ${userText}\\nAI: ${aiText}`;
+          ChatAPI.generateTitle(conversationText)
+            .then((title) => {
+              console.log('AI生成标题:', title);
+              return ChatAPI.renameConversation(currentConversationId, title).then(() => {
+                setConversations(prev => prev.map((c, i) => i === convIdx ? { ...c, title } : c))
               })
-              .catch(() => {/* 忽略失败 */})
-          }
+            })
+            .catch(() => {/* 忽略失败 */})
         }
-        return updated
-      })
+      }
+      // 发送完毕后自动刷新消息列表（重新拉取）
+      if (currentConversationId) {
+        const msgs = await ChatAPI.fetchConversationMessages(currentConversationId)
+        if (msgs && msgs.length > 0) {
+          const loaded = msgs.map((msg: any, idx: number) => ({
+            id: (msg.timestamp ? msg.timestamp : String(idx)) + '-' + (msg._id ? msg._id : Math.random().toString(36).slice(2, 8)),
+            role: msg.role as 'assistant' | 'user',
+            contents: [{ type: 'text' as const, content: msg.content }],
+          }))
+          setMessages(loaded)
+        }
+      }
     } catch (error) {
       console.error('Search failed:', error)
       const errorMessage: Message = {

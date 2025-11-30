@@ -318,6 +318,8 @@ def hybrid(req: HybridSearchRequest):
             embedding_model=req.embedding_model,
             embedding_dimensions=req.embedding_dimensions,
         )
+        # 只保留分数大于等于0.75的结果
+        filtered_rows = [r for r in rows if r.get("combined_score", 0) >= 0.75]
         return {
             "ok": True,
             "query": req.query,
@@ -325,7 +327,7 @@ def hybrid(req: HybridSearchRequest):
             "kvec": req.kvec,
             "kbm25": req.kbm25,
             "top_n": req.top_n,
-            "results": _clean_rows(rows, req.top_n, req.content_preview_chars),
+            "results": _clean_rows(filtered_rows, req.top_n, req.content_preview_chars),
         }
     except HTTPException:
         raise
