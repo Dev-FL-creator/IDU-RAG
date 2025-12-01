@@ -1,7 +1,7 @@
 "use client"
 
 import { Plus, MessageSquare, ChevronLeft, ChevronRight, MoreVertical } from "lucide-react"
-import { ChatAPI } from "@/lib/api"
+import { ConversationAPI, ProjectAPI } from "@/lib/api"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Button } from "@/components/ui/button"
@@ -9,13 +9,10 @@ import { cn } from "@/lib/utils"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
 import { MoveToProjectDialog } from "@/components/move-to-project-dialog"
+import { useState } from "react"
 
-interface Project {
-  id: string
-  name: string
-}
-
-interface Conversation {
+// Local interface for sidebar display (simplified from API Conversation)
+interface SidebarConversation {
   id: string;
   title: string;
   timestamp?: string;
@@ -23,14 +20,12 @@ interface Conversation {
   project_id?: string;
 }
 
-// Project列表和当前选中Project由前端状态管理
-import { useState } from "react"
-
-interface ProjectWithConvs extends Project {
-  conversations: string[] // conversation id 列表
+// Simple project type for sidebar (subset of API Project)
+interface SidebarProject {
+  id: string;
+  name: string;
+  is_default?: boolean;
 }
-
-// mockConversations 移除，使用props.conversations
 
 interface SidebarProps {
   isCollapsed: boolean
@@ -38,14 +33,12 @@ interface SidebarProps {
   onNewConversation: () => void
   currentConversationId?: string
   onSelectConversation: (id: string) => void
-  conversations: Conversation[]
-  setConversations: (convs: {
-    id: string;
-    title: string;
-    timestamp: string;
-    preview?: string;
-    project_id?: string;
-  }[]) => void
+  conversations: SidebarConversation[]
+  setConversations: React.Dispatch<React.SetStateAction<SidebarConversation[]>> | ((convs: SidebarConversation[]) => void)
+  // New props for projects
+  projects: SidebarProject[]
+  setProjects: React.Dispatch<React.SetStateAction<SidebarProject[]>> | ((projects: SidebarProject[]) => void)
+  userId: string
 }
 
 export function Sidebar(props: SidebarProps) {
@@ -57,46 +50,71 @@ export function Sidebar(props: SidebarProps) {
     onSelectConversation,
     conversations,
     setConversations,
+    projects,
+    setProjects,
+    userId,
   } = props;
 
-  // 生成唯一id
-  const genUniqueId = () => `${Date.now()}_${Math.floor(Math.random() * 100000)}`;
-  // 前端Project状态（只存id和name，不存conversations）
-  const [projects, setProjects] = useState<Project[]>([
-    { id: 'default', name: 'Ungrouped' },
-    { id: genUniqueId(), name: 'Project 1' },
-    { id: genUniqueId(), name: 'Project 2' },
-  ]);
-  const [selectedProjectId, setSelectedProjectId] = useState<string>('default');
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('ungrouped');
 
-  // 新建Project
-  const handleNewProject = () => {
+  // Create new project via API
+  const handleNewProject = async () => {
     const name = window.prompt('Enter new project name');
     if (!name) return;
-  const newId = genUniqueId();
-  setProjects(prev => [...prev, { id: newId, name, conversations: [] }]);
+
+    try {
+      const result = await ProjectAPI.create({
+        user_id: userId,
+        name: name.trim(),
+      });
+      setProjects([...projects, { id: result.project.id, name: result.project.name }]);
+    } catch (error) {
+      alert('Failed to create project');
+      console.error(error);
+    }
   };
 
-  // Project重命名
-  const handleRenameProject = (id: string) => {
+  // Rename project via API
+  const handleRenameProject = async (id: string) => {
     const name = window.prompt('Enter new project name');
     if (!name) return;
-    setProjects(prev => prev.map(p => p.id === id ? { ...p, name } : p));
+
+    try {
+      await ProjectAPI.update(id, userId, { name: name.trim() });
+      setProjects(projects.map(p => p.id === id ? { ...p, name: name.trim() } : p));
+    } catch (error) {
+      alert('Failed to rename project');
+      console.error(error);
+    }
   };
 
-  // Project删除
-  const handleDeleteProject = (id: string) => {
-    if (!window.confirm('Are you sure you want to delete this project?')) return;
-    setProjects(prev => prev.filter(p => p.id !== id));
-    // Optionally: move conversations to Ungrouped
+  // Delete project via API
+  const handleDeleteProject = async (id: string) => {
+    if (!window.confirm('Are you sure you want to delete this project? Conversations will be moved to Ungrouped.')) return;
+
+    try {
+      await ProjectAPI.delete(id, userId);
+      setProjects(projects.filter(p => p.id !== id));
+      // Move conversations to ungrouped locally
+      setConversations(conversations.map(c =>
+        c.project_id === id ? { ...c, project_id: undefined } : c
+      ));
+      if (selectedProjectId === id) {
+        setSelectedProjectId('ungrouped');
+      }
+    } catch (error) {
+      alert('Failed to delete project');
+      console.error(error);
+    }
   };
 
   // 删除会话
   const handleDeleteConversation = async (conversationId: string) => {
     if (!window.confirm("Are you sure you want to delete this conversation?")) return;
     try {
-      await ChatAPI.deleteConversation(conversationId);
-      if (typeof window !== 'undefined') window.location.reload();
+      await ConversationAPI.delete(conversationId, userId);
+      // Remove from local state instead of reloading
+      setConversations(conversations.filter(c => c.id !== conversationId));
     } catch (e) {
       alert('Failed to delete conversation');
     }
@@ -108,32 +126,42 @@ export function Sidebar(props: SidebarProps) {
     setMoveDialog({ open: true, conversationId });
   };
   const handleMoveDialogSelect = async (projectId: string, projectName?: string) => {
-    // 日志：打印移动参数
-    if (moveDialog.conversationId) {
-      console.log('[MoveConversation] conversationId:', moveDialog.conversationId, 'projectId:', projectId);
-    }
-    // 新建项目
-    if (projectName) {
-      setProjects(prev => [...prev, { id: projectId, name: projectName }]);
-    }
+    if (!moveDialog.conversationId) return;
+
+    console.log('[MoveConversation] conversationId:', moveDialog.conversationId, 'projectId:', projectId);
+
     try {
-      if (moveDialog.conversationId) {
-        await ChatAPI.moveConversationToProject(moveDialog.conversationId, projectId);
-        // 只本地更新被移动的会话的 project_id
+      // If creating a new project
+      if (projectName) {
+        const result = await ProjectAPI.create({
+          user_id: userId,
+          name: projectName.trim(),
+        });
+        const newProjectId = result.project.id;
+        setProjects([...projects, { id: newProjectId, name: projectName.trim() }]);
+        // Move conversation to the new project
+        await ConversationAPI.move(moveDialog.conversationId, userId, newProjectId);
         setConversations(
-          conversations.map(conv => {
-            const base = {
-              ...conv,
-              timestamp: conv.timestamp || "",
-            };
-            return conv.id === moveDialog.conversationId
-              ? { ...base, project_id: projectId }
-              : base;
-          })
+          conversations.map(conv =>
+            conv.id === moveDialog.conversationId
+              ? { ...conv, project_id: newProjectId }
+              : conv
+          )
+        );
+      } else {
+        // Move to existing project
+        await ConversationAPI.move(moveDialog.conversationId, userId, projectId);
+        setConversations(
+          conversations.map(conv =>
+            conv.id === moveDialog.conversationId
+              ? { ...conv, project_id: projectId }
+              : conv
+          )
         );
       }
     } catch (e) {
       alert('Failed to move conversation');
+      console.error(e);
     }
   };
 
@@ -145,7 +173,7 @@ export function Sidebar(props: SidebarProps) {
   const handleRenameDialogConfirm = async (newTitle: string) => {
     if (!renameDialog.conversationId) return;
     try {
-      await ChatAPI.renameConversation(renameDialog.conversationId, newTitle);
+      await ConversationAPI.update(renameDialog.conversationId, userId, { title: newTitle });
       setConversations(
         conversations.map(conv => {
           const base = {
@@ -233,13 +261,22 @@ export function Sidebar(props: SidebarProps) {
           Projects
         </h3>
         <div className="space-y-1">
+          {/* Ungrouped (always first) */}
           <button
-            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent/50 text-left text-primary font-medium"
-            onClick={handleNewProject}
+            className={cn(
+              "w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent/50 transition-all text-left group",
+              selectedProjectId === 'ungrouped' && "bg-[#d2ede3] border border-primary/20"
+            )}
+            onClick={() => setSelectedProjectId('ungrouped')}
           >
-            <Plus className="h-4 w-4" /> New Project
+            <div className="h-8 w-8 rounded-md bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
+              <MessageSquare className="h-4 w-4 text-primary" />
+            </div>
+            <span className="text-sm font-medium">Ungrouped</span>
           </button>
-          {projects.map((project) => (
+
+          {/* User's projects */}
+          {projects.filter(p => !p.is_default).map((project) => (
             <div key={project.id} className="relative group">
               <button
                 className={cn(
@@ -253,26 +290,32 @@ export function Sidebar(props: SidebarProps) {
                 </div>
                 <span className="text-sm font-medium">{project.name}</span>
               </button>
-              {/* Project 三个点菜单 */}
-              {project.id !== 'default' && (
-                <DropdownMenu.Root>
-                  <DropdownMenu.Trigger asChild>
-                    <button
-                      className="absolute top-2 right-2 opacity-70 hover:opacity-100 p-1 rounded-full hover:bg-accent transition-opacity"
-                      onClick={e => e.stopPropagation()}
-                      aria-label="Project more actions"
-                    >
-                      <MoreVertical className="h-4 w-4" />
-                    </button>
-                  </DropdownMenu.Trigger>
-                  <DropdownMenu.Content sideOffset={5} className="z-50 min-w-[120px] rounded-md bg-white shadow-lg border p-1">
-                    <DropdownMenu.Item className="px-3 py-2 text-sm hover:bg-accent rounded cursor-pointer" onClick={() => handleRenameProject(project.id)}>Rename</DropdownMenu.Item>
-                    <DropdownMenu.Item className="px-3 py-2 text-sm hover:bg-accent rounded cursor-pointer" onClick={() => handleDeleteProject(project.id)}>Delete</DropdownMenu.Item>
-                  </DropdownMenu.Content>
-                </DropdownMenu.Root>
-              )}
+              {/* Project dropdown menu */}
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <button
+                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-70 hover:opacity-100 p-1 rounded-full hover:bg-accent transition-opacity"
+                    onClick={e => e.stopPropagation()}
+                    aria-label="Project more actions"
+                  >
+                    <MoreVertical className="h-4 w-4" />
+                  </button>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Content sideOffset={5} className="z-50 min-w-[120px] rounded-md bg-white shadow-lg border p-1">
+                  <DropdownMenu.Item className="px-3 py-2 text-sm hover:bg-accent rounded cursor-pointer" onClick={() => handleRenameProject(project.id)}>Rename</DropdownMenu.Item>
+                  <DropdownMenu.Item className="px-3 py-2 text-sm hover:bg-accent rounded cursor-pointer text-red-600" onClick={() => handleDeleteProject(project.id)}>Delete</DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu.Root>
             </div>
           ))}
+
+          {/* New Project button */}
+          <button
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent/50 text-left text-primary font-medium mt-2"
+            onClick={handleNewProject}
+          >
+            <Plus className="h-4 w-4" /> New Project
+          </button>
         </div>
       </div>
 
@@ -289,8 +332,11 @@ export function Sidebar(props: SidebarProps) {
           <div className="px-2 pb-4 space-y-1">
             {[...conversations]
               .filter(c => {
-                if (selectedProjectId === 'default') return !c.project_id;
-                return c.project_id === selectedProjectId;
+                // 'ungrouped' means show conversations without project_id
+                const matches = selectedProjectId === 'ungrouped'
+                  ? !c.project_id
+                  : c.project_id === selectedProjectId;
+                return matches;
               })
               .reverse()
               .map((conversation) => (

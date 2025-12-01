@@ -1,71 +1,96 @@
 """
-FastAPI 主服务器 - 整合所有路由供Frontend调用
+FastAPI Main Server - Integrates all routes for Frontend
+
+Routes:
+- /auth/* - User authentication (register, login)
+- /projects/* - Project management (CRUD)
+- /conversations/* - Conversation management (CRUD, messages)
+- /api/search/* - Search functionality
+- /api/upload_pdfs - PDF upload and processing
 """
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
-import os
-import json
 import uvicorn
 
-
-# 导入所有路由
+# Import routes
 from routers.query_routes import router as query_router
 from routers.pdf_ingest_routes import router as pdf_router
-from routers.chat_routes import router as chat_router
+from routers.user_routes import router as user_router
 from routers.project_routes import router as project_router
+from routers.chat_routes import router as chat_router
 
-# 创建FastAPI应用
+# Create FastAPI app
 app = FastAPI(
     title="IDU-RAG Backend API",
-    description="RAG系统后端API，提供PDF处理、向量搜索和混合查询功能",
-    version="1.0.0"
+    description="RAG Backend API with user authentication, project management, and chat functionality",
+    version="2.0.0"
 )
 
-# 配置CORS，允许Frontend跨域访问
+# Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],  # Next.js开发服务器
+    allow_origins=["http://localhost:3000", "http://localhost:3001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Register routes
+app.include_router(user_router, tags=["Authentication"])
+app.include_router(project_router, tags=["Projects"])
+app.include_router(chat_router, tags=["Conversations"])
+app.include_router(query_router, tags=["Search"])
+app.include_router(pdf_router, tags=["PDF"])
 
-# 注册所有路由
-app.include_router(query_router)
-app.include_router(pdf_router)
-app.include_router(chat_router)
-app.include_router(project_router)
-
-# ========== 基本路由 ==========
 
 @app.get("/")
 async def root():
-    """健康检查接口"""
+    """Health check endpoint"""
     return {
         "message": "IDU-RAG Backend API is running",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "status": "healthy",
-        "available_routes": [
-            "/api/search/hybrid",
-            "/api/search/hybrid_batch", 
-            "/api/search/health",
-            "/api/upload_pdfs",
-            "/api/progress/{job_id}",
-            "/docs"
-        ]
+        "available_routes": {
+            "auth": [
+                "POST /auth/register - Register new user",
+                "POST /auth/login - Login user",
+                "GET /auth/user/{user_id} - Get user info"
+            ],
+            "projects": [
+                "GET /projects - List projects",
+                "POST /projects - Create project",
+                "GET /projects/{id} - Get project",
+                "PUT /projects/{id} - Update project",
+                "DELETE /projects/{id} - Delete project"
+            ],
+            "conversations": [
+                "GET /conversations - List conversations",
+                "POST /conversations - Create conversation",
+                "GET /conversations/{id} - Get conversation with messages",
+                "PUT /conversations/{id} - Update conversation",
+                "DELETE /conversations/{id} - Delete conversation",
+                "POST /conversations/{id}/move - Move to project",
+                "POST /conversations/{id}/messages - Add message"
+            ],
+            "search": [
+                "POST /api/search/hybrid - Hybrid search",
+                "GET /api/search/health - Search health check"
+            ],
+            "pdf": [
+                "POST /api/upload_pdfs - Upload PDFs",
+                "GET /api/progress/{job_id} - Get upload progress"
+            ],
+            "docs": "/docs - API documentation"
+        }
     }
 
+
 if __name__ == "__main__":
-    print("启动IDU-RAG Backend API服务器...")
-    print("服务地址: http://localhost:8001")
-    print("API文档: http://localhost:8001/docs")
-    print("搜索接口: http://localhost:8001/api/search/hybrid")
-    print("PDF上传: http://localhost:8001/api/upload_pdfs")
-    
+    print("Starting IDU-RAG Backend API server...")
+    print("Server: http://localhost:8001")
+    print("API Docs: http://localhost:8001/docs")
+
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
