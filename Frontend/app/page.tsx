@@ -244,32 +244,30 @@ export default function Home() {
         ],
       }
 
-      setMessages((prev) => {
-        const updated = [...prev, aiMessage]
+      setMessages((prev) => [...prev, aiMessage])
 
-        // Save AI message (only if logged in and has conversation)
-        if (currentUser && currentConversationId) {
-          ConversationAPI.addMessage(currentConversationId, {
-            user_id: userId,
-            role: 'assistant',
-            content: resultTexts.join('\n'),
-          }).catch(err => console.error('Failed to save AI message:', err))
+      // Save AI message (only if logged in and has conversation)
+      // NOTE: This must be outside setMessages callback to avoid duplicate saves in React StrictMode
+      if (currentUser && currentConversationId) {
+        ConversationAPI.addMessage(currentConversationId, {
+          user_id: userId,
+          role: 'assistant',
+          content: resultTexts.join('\n'),
+        }).catch(err => console.error('Failed to save AI message:', err))
 
-          // Auto-generate title for new conversations
-          const convIdx = conversations.findIndex(c => c.id === currentConversationId)
-          if (convIdx !== -1 && (conversations[convIdx].title === 'Untitled' || conversations[convIdx].title.startsWith('Conversation'))) {
-            const conversationText = `User: ${content}\nAI: ${resultTexts.join('\n')}`
-            ConversationAPI.generateTitle(conversationText)
-              .then((title) => {
-                ConversationAPI.update(currentConversationId, currentUser.id, { title }).then(() => {
-                  setConversations(prev => prev.map((c, i) => i === convIdx ? { ...c, title } : c))
-                })
+        // Auto-generate title for new conversations
+        const convIdx = conversations.findIndex(c => c.id === currentConversationId)
+        if (convIdx !== -1 && (conversations[convIdx].title === 'Untitled' || conversations[convIdx].title.startsWith('Conversation'))) {
+          const conversationText = `User: ${content}\nAI: ${resultTexts.join('\n')}`
+          ConversationAPI.generateTitle(conversationText)
+            .then((title) => {
+              ConversationAPI.update(currentConversationId, currentUser.id, { title }).then(() => {
+                setConversations(prev => prev.map((c, i) => i === convIdx ? { ...c, title } : c))
               })
-              .catch(() => {})
-          }
+            })
+            .catch(() => {})
         }
-        return updated
-      })
+      }
     } catch (error) {
       console.error('Search failed:', error)
       const errorMessage: Message = {
