@@ -160,7 +160,28 @@ export default function Home() {
       } else {
         resultTexts.push("Sorry, no relevant results found. Please try using different keywords.")
       }
-      // 只保存AI消息到后端，不直接setMessages
+
+      // 创建包含公司名片
+      const aiMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        contents: [
+          {
+            type: "text",
+            content: resultTexts.join('\n')
+          },
+          ...companies.slice(0, 3).map(company => ({
+            type: "company" as const,
+            content: company.name,
+            company: company
+          }))
+        ],
+      }
+
+      // 显示AI消息（包含公司名片）
+      setMessages((prev) => [...prev, aiMessage])
+
+      // 保存AI消息到后端（纯文本）
       const aiMsg: ChatMessage = {
         user_id: USER_ID,
         role: 'assistant',
@@ -168,7 +189,7 @@ export default function Home() {
         timestamp: new Date().toISOString(),
         conversation_id: currentConversationId || undefined,
       }
-      await ChatAPI.saveChatMessage(aiMsg)
+      ChatAPI.saveChatMessage(aiMsg)
 
       // 自动命名：仅当本会话标题为默认/未命名时，自动用AI回复前20字命名
       if (currentConversationId) {
@@ -186,18 +207,6 @@ export default function Home() {
               })
             })
             .catch(() => {/* 忽略失败 */})
-        }
-      }
-      // 发送完毕后自动刷新消息列表（重新拉取）
-      if (currentConversationId) {
-        const msgs = await ChatAPI.fetchConversationMessages(currentConversationId)
-        if (msgs && msgs.length > 0) {
-          const loaded = msgs.map((msg: any, idx: number) => ({
-            id: (msg.timestamp ? msg.timestamp : String(idx)) + '-' + (msg._id ? msg._id : Math.random().toString(36).slice(2, 8)),
-            role: msg.role as 'assistant' | 'user',
-            contents: [{ type: 'text' as const, content: msg.content }],
-          }))
-          setMessages(loaded)
         }
       }
     } catch (error) {
